@@ -8,6 +8,12 @@ A proactive multi-session coding-agent harness in about 660 lines of TypeScript,
 
 English | [한국어](README.ko.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
+<p align="center">
+  <a href="docs/dori-intro-1080p.mp4"><img src="docs/dori-intro-preview.gif" alt="Dori intro video" width="640"></a>
+</p>
+
+<p align="center"><sub>Dori in 19 seconds. Click the preview for the 1080p video.</sub></p>
+
 One lead session talks to you. Each task runs as a lane: its own omo session in its own herdr tab, started from a written brief and finished with a READY that must carry evidence. A duty loop nudges lanes that go quiet, escalates to the lead, and holds messages for busy panes until they can read them. Merges pass through a gate that requires a CLEAR review receipt at the exact head plus green checks.
 
 ## Why this exists

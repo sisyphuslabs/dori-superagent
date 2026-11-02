@@ -8,6 +8,12 @@
 
 [English](README.md) | [한국어](README.ko.md) | [简体中文](README.zh-CN.md) | 日本語
 
+<p align="center">
+  <a href="docs/dori-intro-1080p.mp4"><img src="docs/dori-intro-preview.gif" alt="Dori intro video" width="640"></a>
+</p>
+
+<p align="center"><sub>19 秒で Dori を紹介する動画です。プレビューをクリックすると 1080p の動画が開きます。</sub></p>
+
 人と会話するのは lead セッション一つだけです。タスクは一つずつ lane として走ります。lane は専用の herdr タブに立てた omo セッションで、文書化された brief（指示書）から始まり、エビデンス付きの READY で終わります。duty ループは黙り込んだ lane を催促し、lead にエスカレーションし、忙しいペイン宛てのメッセージは読める状態になるまで預かります。マージはゲートを通ります。ゲートが要求するのは、現在の head SHA に対する CLEAR のレビュー記録（receipt）と、グリーンのチェックです。
 
 ## なぜ作ったか

@@ -8,6 +8,12 @@
 
 [English](README.md) | 한국어 | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
+<p align="center">
+  <a href="docs/dori-intro-1080p.mp4"><img src="docs/dori-intro-preview.gif" alt="Dori intro video" width="640"></a>
+</p>
+
+<p align="center"><sub>19초짜리 Dori 소개 영상입니다. 미리보기를 누르면 1080p 영상이 열립니다.</sub></p>
+
 사람과 이야기하는 세션은 리드 하나입니다. 작업은 하나하나 레인(lane)으로 돌아갑니다. 레인은 자기 herdr 탭에 뜬 omo 세션 하나로, 글로 쓴 브리프를 받아 시작하고 증거가 붙은 READY로 끝납니다. 듀티(duty) 루프는 조용해진 레인을 찔러 보고, 그래도 안 되면 리드에게 올리고, 바쁜 pane에 갈 메시지는 읽을 수 있을 때까지 들고 있습니다. 머지는 게이트를 지나는데, 게이트가 요구하는 것은 정확히 그 head에서 받은 CLEAR 리뷰 영수증과 녹색 체크입니다.
 
 ## 왜 만들었나

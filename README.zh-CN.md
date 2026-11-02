@@ -8,6 +8,12 @@
 
 [English](README.md) | [한국어](README.ko.md) | 简体中文 | [日本語](README.ja.md)
 
+<p align="center">
+  <a href="docs/dori-intro-1080p.mp4"><img src="docs/dori-intro-preview.gif" alt="Dori intro video" width="640"></a>
+</p>
+
+<p align="center"><sub>19 秒看懂 Dori。点击预览图打开 1080p 视频。</sub></p>
+
 和你对话的只有一个 lead 会话。每个任务是一条 lane：一个独立的 omo 会话，开在自己的 herdr 标签页里，从一份写好的任务简报（brief）启动，以一条必须附带证据的 READY 收尾。duty 循环负责催没动静的 lane、向 lead 上报，并把发给忙碌窗格（pane）的消息先存起来，等它能读了再送。合并要过一道门禁：精确 head 上的 CLEAR 评审回执，加上全绿的检查项。
 
 ## 缘起
