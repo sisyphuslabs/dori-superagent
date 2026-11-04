@@ -19,7 +19,11 @@ export const sampleHost = async (run: Runner, dataPath = "/"): Promise<HostSampl
   const loadLinux = load.code === 0 ? null : await run(["cat", "/proc/loadavg"]);
   const load1 = num((load.code === 0 ? load.out.replace(/[{}]/g, "").trim() : loadLinux?.out ?? "").split(/\s+/)[0], 0);
   const mp = await run(["memory_pressure", "-Q"]);
-  const memFreePct = mp.code === 0 ? num(/free percentage: (\d+)%/.exec(mp.out)?.[1], 100) : 100;
+  const memInfo = mp.code === 0 ? null : await run(["cat", "/proc/meminfo"]);
+  const kb = (key: string): number => num(new RegExp(`^${key}:\\s+(\\d+)`, "m").exec(memInfo?.out ?? "")?.[1], 0);
+  const memFreePct = mp.code === 0
+    ? num(/free percentage: (\d+)%/.exec(mp.out)?.[1], 100)
+    : kb("MemTotal") > 0 && kb("MemAvailable") > 0 ? Math.round((kb("MemAvailable") / kb("MemTotal")) * 100) : 100;
   const df = await run(["df", "-k", dataPath]);
   const diskFreeGb = num(df.out.split("\n").at(-1)?.trim().split(/\s+/)[3], 0) / 1_048_576;
   const swap = await run(["sysctl", "-n", "vm.swapusage"]);
