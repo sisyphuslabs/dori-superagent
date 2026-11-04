@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { cpus, freemem, loadavg, totalmem } from "node:os";
 import { join, resolve } from "node:path";
 import { Herdr, HerdrError, omoScreenIdle, shq, spawnExec, type AgentStatus, type Exec } from "./herdr.ts";
+import { loadMachines, Ovis, parseRemoteReports, remoteKickoff, remoteReportPath, splitPane } from "./ovis.ts";
 import { KEY_RE, Store, type HostLoad, type Lane, type Role } from "./store.ts";
 import { Telemetry, type MergeOutcome, type Usage } from "./telemetry.ts";
 
@@ -21,6 +22,8 @@ export type Deps = {
   readonly doriCmd: string;
   readonly host: () => HostLoad;
   readonly usage: Usage;
+  /** The Ovis of a PC named in `$DORI_HOME/machines.json`, for lanes started with `--machine`. */
+  readonly machine: (name: string) => Ovis;
 };
 
 export const defaultDeps = (): Deps => {
@@ -34,6 +37,11 @@ export const defaultDeps = (): Deps => {
     doriCmd: process.env["DORI_CMD"] ?? `DORI_HOME=${shq(store.root)} bun ${shq(CLI)}`,
     host: () => ({ load1: loadavg()[0] ?? 0, cores: cpus().length, memFreePct: memFreePct() }),
     usage: new Telemetry(store.root),
+    machine: (name) => {
+      const config = loadMachines(store.root)[name];
+      if (!config) throw new Refusal(`no machine ${name} in ${join(store.root, "machines.json")}`);
+      return new Ovis(name, config);
+    },
   };
 };
 
@@ -67,8 +75,21 @@ const prompt = (name: string, vars: Record<string, string>): string =>
 
 // ---------- pane messaging ----------
 
+export type PaneHost = Pick<Herdr, "status" | "deliver" | "read" | "close">;
+
+/** A `<machine>@<pane>` id is a remote lane's pane, reached through that PC's Ovis; any other is local herdr's. */
+export function paneHost(d: Deps, paneId: string): [PaneHost, string] {
+  const remote = splitPane(paneId);
+  return remote ? [d.machine(remote.machine), remote.pane] : [d.herdr, paneId];
+}
+
+export async function paneStatus(d: Deps, paneId: string): Promise<AgentStatus> {
+  const [host, id] = paneHost(d, paneId);
+  return host.status(id);
+}
+
 export function resolveTarget(d: Deps, target: string): string {
-  if (/^w[0-9A-Za-z]+:p[0-9A-Za-z]+$/.test(target)) return target;
+  if (/^(?:[a-z][a-z0-9-]*@)?w[0-9A-Za-z]+:p[0-9A-Za-z]+$/.test(target)) return target;
   const roles = d.store.roles();
   if (target === "lead" || target === "duty") {
     const pane = roles[target];
@@ -92,7 +113,8 @@ export async function send(d: Deps, target: string, text: string, from: string):
 export async function flushInbox(d: Deps, paneId: string): Promise<boolean> {
   const queued = d.store.queued(paneId);
   if (queued.length === 0) return true;
-  let status = await d.herdr.status(paneId);
+  const [host, id] = paneHost(d, paneId);
+  let status = await host.status(id);
   if (status === "gone") throw new Refusal(`pane ${paneId} is gone; ${queued.length} message(s) kept in its inbox`);
   if (status === "working" && (await screenShowsIdle(d, paneId))) status = "idle";
   if (!READY_TO_READ.includes(status)) return false;
@@ -101,7 +123,7 @@ export async function flushInbox(d: Deps, paneId: string): Promise<boolean> {
       ? queued[0]!.text
       : `${queued.length} messages arrived while you were busy:\n\n` +
         queued.map((m, i) => `(${i + 1}) from ${m.from}:\n${m.text}`).join("\n\n");
-  await d.herdr.deliver(paneId, body, status);
+  await host.deliver(id, body, status);
   d.store.clearInbox(paneId);
   return true;
 }
@@ -112,7 +134,8 @@ export async function flushInbox(d: Deps, paneId: string): Promise<boolean> {
  */
 async function screenShowsIdle(d: Deps, paneId: string): Promise<boolean> {
   try {
-    return omoScreenIdle(await d.herdr.read(paneId, 30));
+    const [host, id] = paneHost(d, paneId);
+    return omoScreenIdle(await host.read(id, 30));
   } catch {
     return false;
   }
@@ -132,32 +155,55 @@ export async function startLane(
   d: Deps,
   key: string,
   briefFile: string,
-  opts: { cwd?: string; workspace?: string } = {},
+  opts: { cwd?: string; workspace?: string; machine?: string } = {},
 ): Promise<Lane> {
   if (!KEY_RE.test(key)) throw new Refusal(`lane key must match ${KEY_RE}`);
   const existing = d.store.lane(key);
   if (existing && existing.status !== "done" && existing.status !== "lost") throw new Refusal(`lane ${key} is already open in ${existing.paneId}`);
-  const cwd = resolve(opts.cwd ?? process.cwd());
   const briefPath = d.store.briefPath(key);
-  const footer = prompt("lane-footer.md", { key, dori: d.doriCmd });
-  await Bun.write(briefPath, `${readFileSync(briefFile, "utf8").trimEnd()}\n\n${footer}`);
+  const briefText = readFileSync(briefFile, "utf8").trimEnd();
 
-  const workspace = opts.workspace ?? process.env["HERDR_WORKSPACE_ID"];
-  const env = { DORI_LANE: key, DORI_HOME: d.store.root };
-  const pane = workspace
-    ? await d.herdr.createTab(key, cwd, workspace, env)
-    : await d.herdr.createTab(key, cwd, (await d.herdr.createWorkspace("dori", cwd)).workspaceId, env);
-  const kickoff = `Read your brief at ${briefPath} and execute it. Your lane key is ${key}.`;
-  await d.herdr.run(pane.paneId, `${d.agentCmd} ${shq(kickoff)}`);
+  let paneId: string;
+  let tabId: string;
+  let cwd: string;
+  if (opts.machine) {
+    // That PC cannot read this one's brief file or run this one's dori: the brief is written there as the
+    // lane starts, and the lane reports through a file on its own PC that the duty loop pulls (pullRemoteReports).
+    const ovis = d.machine(opts.machine);
+    const footer = prompt("lane-footer-remote.md", { key, machine: opts.machine, reports: remoteReportPath(key) });
+    const brief = `${briefText}\n\n${footer}`;
+    await Bun.write(briefPath, brief);
+    const pane = await ovis.startLane({
+      label: key, commandLines: remoteKickoff(key, brief, ovis.agent ?? d.agentCmd, shq),
+      ...(opts.cwd ? { cwd: opts.cwd } : {}), ...(opts.workspace ? { workspaceId: opts.workspace } : {}),
+    });
+    paneId = `${opts.machine}@${pane.paneId}`;
+    tabId = pane.tabId;
+    cwd = opts.cwd ?? "~";
+  } else {
+    cwd = resolve(opts.cwd ?? process.cwd());
+    const footer = prompt("lane-footer.md", { key, dori: d.doriCmd });
+    await Bun.write(briefPath, `${briefText}\n\n${footer}`);
+    const workspace = opts.workspace ?? process.env["HERDR_WORKSPACE_ID"];
+    const env = { DORI_LANE: key, DORI_HOME: d.store.root };
+    const pane = workspace
+      ? await d.herdr.createTab(key, cwd, workspace, env)
+      : await d.herdr.createTab(key, cwd, (await d.herdr.createWorkspace("dori", cwd)).workspaceId, env);
+    const kickoff = `Read your brief at ${briefPath} and execute it. Your lane key is ${key}.`;
+    await d.herdr.run(pane.paneId, `${d.agentCmd} ${shq(kickoff)}`);
+    paneId = pane.paneId;
+    tabId = pane.tabId;
+  }
 
   const now = d.now();
   const lane: Lane = {
-    key, paneId: pane.paneId, tabId: pane.tabId, brief: briefPath, cwd,
+    key, paneId, tabId, brief: briefPath, cwd,
     status: "working", createdAt: now, lastActivityAt: now, nudges: 0,
     log: [{ at: now, kind: "start", text: briefFile }],
+    ...(opts.machine ? { machine: opts.machine, remoteEntries: 0 } : {}),
   };
   d.store.saveLane(lane);
-  await tellLead(d, `[START ${key}] lane opened in ${pane.paneId}`, key);
+  await tellLead(d, `[START ${key}] lane opened in ${paneId}`, key);
   const open = d.store.lanes().filter((l) => l.status === "working" || l.status === "waiting").length;
   d.usage.record({ name: "dori.lane_started", open_lanes: Math.min(open, 1000) });
   return lane;
@@ -203,9 +249,10 @@ export async function done(d: Deps, key: string): Promise<void> {
   const lane = d.store.lane(key);
   if (!lane) throw new Refusal(`no lane ${key}`);
   if (lane.status !== "ready") throw new Refusal(`lane ${key} is ${lane.status}, not ready: no final answer recorded`);
-  const st = await d.herdr.status(lane.paneId);
+  const [host, id] = paneHost(d, lane.paneId);
+  const st = await host.status(id);
   if (st === "working" || st === "blocked") throw new Refusal(`lane ${key} pane is ${st}; let it finish first`);
-  if (st !== "gone") await d.herdr.close(lane.paneId);
+  if (st !== "gone") await host.close(id);
   lane.status = "done";
   lane.log.push({ at: d.now(), kind: "done", text: "closed by lead" });
   d.store.saveLane(lane);
@@ -228,7 +275,35 @@ export async function dutyTick(d: Deps): Promise<DutyEvent[]> {
   const stop = d.store.stop("duty");
   if (stop) return [{ action: "stopped", detail: stop.reason }];
   const events: DutyEvent[] = [];
+  // A PC whose report file could not be read this tick is not asked again until the next one: its lanes are
+  // neither declared lost (a READY may still sit in that file) nor each made to wait out the request timeout.
+  const unreachable = new Set<string>();
+  const applyFailed = new Set<string>();
+  for (const lane of d.store.lanes()) {
+    if (!lane.machine || (lane.status !== "working" && lane.status !== "waiting")) continue;
+    if (unreachable.has(lane.machine)) {
+      events.push({ lane: lane.key, action: "pull-failed", detail: `${lane.machine} unreachable this tick` });
+      continue;
+    }
+    let text: string | null;
+    try {
+      text = await d.machine(lane.machine).readFile(remoteReportPath(lane.key));
+    } catch (e) {
+      unreachable.add(lane.machine);
+      events.push({ lane: lane.key, action: "pull-failed", detail: failureDetail(e) });
+      continue;
+    }
+    try {
+      events.push(...(await applyRemoteReports(d, lane.key, text)));
+    } catch (e) {
+      applyFailed.add(lane.key);
+      // a failure on this side (the lead's pane, the lane's own pane) is this lane's, never its PC's
+      events.push({ lane: lane.key, action: "apply-failed", detail: failureDetail(e) });
+    }
+  }
+  const skipped = (paneId: string): boolean => unreachable.has(splitPane(paneId)?.machine ?? "");
   for (const paneId of d.store.inboxPanes()) {
+    if (skipped(paneId)) continue;
     try {
       if (await flushInbox(d, paneId)) events.push({ pane: paneId, action: "flushed" });
     } catch (e) {
@@ -239,9 +314,25 @@ export async function dutyTick(d: Deps): Promise<DutyEvent[]> {
   }
   for (const lane of d.store.lanes()) {
     if (lane.status !== "working" && lane.status !== "waiting") continue;
+    if (skipped(lane.paneId)) {
+      events.push({ lane: lane.key, action: "lane-failed", detail: `${lane.machine} unreachable this tick` });
+      continue;
+    }
     try {
-      const st = await d.herdr.status(lane.paneId);
+      const st = await paneStatus(d, lane.paneId);
       const now = d.now();
+      if (st === "gone" && lane.machine) {
+        // its report file outlives the pane: what it says is taken before the lane is called lost, and a lane
+        // whose entries could not be applied this tick is left for the next one
+        if (applyFailed.has(lane.key)) {
+          events.push({ lane: lane.key, action: "lane-failed", detail: "pane gone, report file not applied yet" });
+          continue;
+        }
+        events.push(...(await applyRemoteReports(d, lane.key, await d.machine(lane.machine).readFile(remoteReportPath(lane.key)))));
+        const after = d.store.lane(lane.key)!;
+        if (after.status !== "working" && after.status !== "waiting") continue;
+        Object.assign(lane, after);
+      }
       if (st === "gone") {
         lane.status = "lost";
         lane.log.push({ at: now, kind: "lost", text: "pane disappeared without READY" });
@@ -263,7 +354,8 @@ export async function dutyTick(d: Deps): Promise<DutyEvent[]> {
       lane.log.push({ at: now, kind: "nudge", text: `idle ${Math.floor(idleMin)} min` });
       d.store.saveLane(lane);
       if (lane.nudges < NUDGE_MINUTES.length) {
-        await send(d, lane.key, prompt("nudge.md", { key: lane.key, minutes: String(Math.floor(idleMin)), dori: d.doriCmd }), "duty");
+        const vars = { key: lane.key, minutes: String(Math.floor(idleMin)), dori: d.doriCmd, reports: remoteReportPath(lane.key) };
+        await send(d, lane.key, prompt(lane.machine ? "nudge-remote.md" : "nudge.md", vars), "duty");
         events.push({ lane: lane.key, action: `nudge-${lane.nudges}` });
       } else {
         await tellLead(d, `[ESCALATE ${lane.key}] idle ${Math.floor(idleMin)} min with no READY after ${lane.nudges - 1} nudges`, "duty");
@@ -283,6 +375,44 @@ export async function dutyTick(d: Deps): Promise<DutyEvent[]> {
     escalations: count((a) => a === "escalated"),
     lost: count((a) => a === "lost"),
   });
+  return events;
+}
+
+/**
+ * Applies the entries a remote lane appended to its report file since the last pull, through the same
+ * report/ready a local lane's dori calls. A READY without evidence is consumed and sent back to the lane,
+ * so it is not refused again on every tick. An entry counts as applied once it is in the lane's record,
+ * even when telling the lead failed after that: the lead is told through the record, never twice.
+ */
+export async function applyRemoteReports(d: Deps, key: string, text: string | null): Promise<DutyEvent[]> {
+  if (text === null) return [];
+  const events: DutyEvent[] = [];
+  const entries = parseRemoteReports(text);
+  for (let at = d.store.lane(key)!.remoteEntries ?? 0; at < entries.length; at++) {
+    const entry = entries[at]!;
+    const before = d.store.lane(key)!;
+    if (before.status !== "working" && before.status !== "waiting") break;
+    // the position is set, never added to: two duty passes applying the same entry leave it the same
+    if ((before.remoteEntries ?? 0) > at) continue;
+    const count = () => {
+      const lane = d.store.lane(key)!;
+      lane.remoteEntries = Math.max(lane.remoteEntries ?? 0, at + 1);
+      d.store.saveLane(lane);
+    };
+    if (entry.kind === "ready" && (entry.evidence.length === 0 || !entry.text)) {
+      count();
+      events.push({ lane: key, action: "remote-ready-refused" });
+      await send(d, key, `Your READY in ${remoteReportPath(key)} was not accepted: it needs the final answer text and at least one "evidence: <link>" line. Append a new READY entry.`, "duty");
+      continue;
+    }
+    try {
+      if (entry.kind === "report") await report(d, key, entry.text, entry.status);
+      else await ready(d, key, entry.text, entry.evidence);
+    } finally {
+      if (d.store.lane(key)!.log.length > before.log.length) count();
+    }
+    events.push({ lane: key, action: entry.kind === "report" ? "remote-report" : "remote-ready" });
+  }
   return events;
 }
 
