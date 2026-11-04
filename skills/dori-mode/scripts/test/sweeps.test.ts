@@ -225,6 +225,11 @@ const linuxHost = (meminfo: string | null): Runner => async (argv) => {
   return { code: 127, out: "", err: "not found" };
 };
 
+test("on Linux the host guard reports 0% free when MemAvailable is 0", async () => {
+  const s = await sampleHost(linuxHost("MemTotal:       16000000 kB\nMemFree:               0 kB\nMemAvailable:          0 kB\n"));
+  expect(s.memFreePct).toBe(0);
+});
+
 test("on Linux the host guard reads free memory from /proc/meminfo when memory_pressure is missing", async () => {
   const s = await sampleHost(linuxHost("MemTotal:       16000000 kB\nMemFree:          200000 kB\nMemAvailable:    4000000 kB\n"));
   expect(s.memFreePct).toBe(25);
