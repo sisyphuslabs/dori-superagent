@@ -176,11 +176,13 @@ export const toInbound = (data: unknown, selfId: string, guildHint?: string | nu
   };
 };
 
-const MAX_INBOUND_TEXT = 1500;
+/** A replaced message is quoted as a preview; the quoted message normally has its own line. */
 const REPLY_PREVIEW = 300;
 
+/** The message text goes out whole: JSON.stringify keeps it on one line, and cutting it would
+ * leave the monitor with no way to tell a short message from a long one. */
 export const formatInbound = (i: Inbound): string =>
-  `INBOUND discord ${i.source} ${i.channel} ${i.guild} ${i.messageId} ${i.author} ${JSON.stringify(i.text.slice(0, MAX_INBOUND_TEXT))}` +
+  `INBOUND discord ${i.source} ${i.channel} ${i.guild} ${i.messageId} ${i.author} ${JSON.stringify(i.text)}` +
   (i.media && i.media.length > 0 ? ` media=${i.media.join(",")}` : "") +
   (i.replyToId
     ? ` reply_to=${i.replyToId}${i.replyToAuthor ? ` reply_author=${JSON.stringify(i.replyToAuthor)}` : ""}${
@@ -197,6 +199,9 @@ export class DiscordInbound {
   private stopped = false;
   private readonly seen = new Set<string>();
   private chain: Promise<void> = Promise.resolve();
+  /** Every line goes out through here, one at a time: arrival order, print order and cursor order
+   * stay the same, which is what lets the cursor mean "everything up to this id has been printed". */
+  private deliveries: Promise<void> = Promise.resolve();
   private cursorMap: Record<string, string> = {};
   private cursorWrite: Promise<void> = Promise.resolve();
 
@@ -224,9 +229,10 @@ export class DiscordInbound {
   async idle(): Promise<void> {
     for (;;) {
       const chain = this.chain;
+      const deliveries = this.deliveries;
       const write = this.cursorWrite;
-      await Promise.all([chain, write]);
-      if (chain === this.chain && write === this.cursorWrite) return;
+      await Promise.all([chain, deliveries, write]);
+      if (chain === this.chain && deliveries === this.deliveries && write === this.cursorWrite) return;
     }
   }
 
@@ -296,19 +302,29 @@ export class DiscordInbound {
   }
 
   /** The one path a message takes, whether it arrived on the socket or from a backfill page.
-   * Returns true when the message reached the caller. */
-  private report(data: unknown, guildHint?: string | null): boolean {
+   * Resolves true once the line is out and the channel cursor has moved past it, false when the
+   * line could not be printed (the cursor stays behind, so a restart replays it); null when there
+   * is no line at all — filtered, a duplicate, or nothing to report. */
+  private report(data: unknown, guildHint?: string | null): Promise<boolean> | null {
     const inbound = toInbound(data, this.selfId, guildHint);
-    if (!inbound) return false;
-    if (this.seen.has(inbound.messageId)) return false;
+    if (!inbound) return null;
+    if (this.seen.has(inbound.messageId)) return null;
     this.seen.add(inbound.messageId);
     if (this.seen.size > MAX_SEEN) {
       const oldest = this.seen.values().next().value;
       if (oldest !== undefined) this.seen.delete(oldest);
     }
-    this.noteCursor(inbound.channel, inbound.messageId);
-    this.deliver(inbound, mediaRefs(data));
-    return true;
+    return this.deliver(inbound, mediaRefs(data)).then(
+      () => {
+        this.noteCursor(inbound.channel, inbound.messageId);
+        return true;
+      },
+      (e) => {
+        this.seen.delete(inbound.messageId);
+        this.onEvent(`delivery failed: ${(e as Error).message}`);
+        return false;
+      },
+    );
   }
 
   /** A restart identifies from scratch, so Discord replays nothing: whatever arrived while the
@@ -364,12 +380,21 @@ export class DiscordInbound {
         return newerId(left, right) === left ? 1 : -1;
       });
       for (const row of ordered) {
+        const sent = this.report(row, guild);
+        if (sent !== null && !(await sent)) {
+          // The line never came out. Leave the cursor on the last row that did, so the next
+          // restart fetches this message again instead of skipping past it.
+          this.onEvent(`backfill stopped for ${channel}: delivery failed`);
+          return;
+        }
+        if (sent !== null) delivered++;
+        // The cursor means "everything up to here is handled", including the bot's own messages and
+        // anything this run filtered, so the next restart does not fetch them again. It moves one
+        // row at a time and only after that row's line, so a page as a whole can never overtake a
+        // message whose download is still running.
+        this.noteCursor(channel, idOf(row));
         cursor = newerId(cursor, idOf(row));
-        if (this.report(row, guild)) delivered++;
       }
-      // The cursor means "everything up to here is handled", including the bot's own messages and
-      // anything this run filtered, so the next restart does not fetch them again.
-      this.noteCursor(channel, cursor);
       fetched += rows.length;
       if (rows.length < BACKFILL_PAGE) break;
       if (page === BACKFILL_MAX_PAGES - 1) truncated = true;
@@ -396,27 +421,29 @@ export class DiscordInbound {
       .catch((e) => this.onEvent(`cursor write failed: ${(e as Error).message}`));
   }
 
-  /** Media is fetched off the socket's critical path, but one message at a time, so the lane sees
-   * every image cache-warm and in the order the messages arrived. */
-  private deliver(inbound: Inbound, refs: readonly MediaRef[]): void {
+  /** One message at a time, so the lane sees every image cache-warm and in the order the messages
+   * arrived; a text line waits its turn rather than overtaking a download, because the cursor has
+   * to move in the same order as the lines. A download that fails prints the line without
+   * `media=`: the message itself is never held back. */
+  private deliver(inbound: Inbound, refs: readonly MediaRef[]): Promise<void> {
     const store = this.store;
-    if (!store || refs.length === 0) {
-      this.onInbound(inbound);
-      return;
-    }
-    this.chain = this.chain
-      .then(async () => {
-        const media: string[] = [];
-        for (const [index, ref] of refs.entries()) {
-          try {
-            media.push(...(await store.save(inbound.messageId, index, ref)));
-          } catch (e) {
-            this.onEvent(`media download failed: ${(e as Error).message}`);
-          }
+    const job = this.deliveries.then(async () => {
+      if (!store || refs.length === 0) {
+        this.onInbound(inbound);
+        return;
+      }
+      const media: string[] = [];
+      for (const [index, ref] of refs.entries()) {
+        try {
+          media.push(...(await store.save(inbound.messageId, index, ref)));
+        } catch (e) {
+          this.onEvent(`media download failed: ${(e as Error).message}`);
         }
-        this.onInbound(media.length > 0 ? { ...inbound, media } : inbound);
-      })
-      .catch((e) => this.onEvent(`media queue failed: ${(e as Error).message}`));
+      }
+      this.onInbound(media.length > 0 ? { ...inbound, media } : inbound);
+    });
+    this.deliveries = job.catch((e) => this.onEvent(`media queue failed: ${(e as Error).message}`));
+    return job;
   }
 
   private startHeartbeat(d: Record<string, unknown> | null | undefined): void {
