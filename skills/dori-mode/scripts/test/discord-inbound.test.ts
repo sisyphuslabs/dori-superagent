@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   DiscordInbound,
+  formatInbound,
   type ChannelGuild,
   type ChannelHistory,
   type Clock,
@@ -8,6 +9,7 @@ import {
   type GatewaySocket,
   type Inbound,
   type InboundCursors,
+  type MediaStore,
 } from "../src/messenger/discord-inbound.ts";
 
 const inertClock: Clock = { setInterval: () => 1, clearInterval: () => {} };
@@ -27,7 +29,7 @@ const cursorStore = (initial: InboundCursors) => {
   return { store, writes, current: () => current };
 };
 
-type Row = { id: string; channel_id: string; guild_id?: string; content?: string; author?: { id?: string; username?: string; bot?: boolean } };
+type Row = { id: string; channel_id: string; guild_id?: string; content?: string; author?: { id?: string; username?: string; bot?: boolean }; attachments?: readonly unknown[] };
 
 const row = (id: string, channel: string, authorId = "someone", content = `m${id}`): Row => ({
   id,
@@ -35,6 +37,8 @@ const row = (id: string, channel: string, authorId = "someone", content = `m${id
   content,
   author: { id: authorId, username: `user-${authorId}` },
 });
+
+const mediaRow = (id: string, channel: string): Row => ({ ...row(id, channel, "someone", ""), attachments: [{ url: `https://cdn/${id}.png`, filename: `${id}.png` }] });
 
 const newestFirst = (...rows: Row[]): readonly unknown[] => rows;
 
@@ -50,6 +54,7 @@ const harness = (opts: {
   rowsFor: (channel: string, after: string) => Promise<readonly unknown[]>;
   selfId?: string;
   guild?: ChannelGuild;
+  media?: MediaStore | null;
 }): Harness => {
   const delivered: Inbound[] = [];
   const events: string[] = [];
@@ -65,7 +70,7 @@ const harness = (opts: {
     opts.selfId ?? "self",
     (i) => delivered.push(i),
     (line) => events.push(line),
-    null,
+    opts.media ?? null,
     opts.cursors,
     history,
     opts.guild ?? (async () => "guild-1"),
@@ -124,5 +129,115 @@ describe("DiscordInbound backfill", () => {
     expect(h.delivered).toEqual([]);
     expect(cursorState.writes).toEqual([]);
     expect(h.events).toContain("backfill stopped for ch1: 502 bad gateway");
+  });
+});
+
+describe("DiscordInbound delivery guarantee", () => {
+  test("a media message's cursor moves only after its line is out", async () => {
+    const cursorState = cursorStore({ ch1: "300" });
+    let releaseSave = () => {};
+    let saveStarted = () => {};
+    const started = new Promise<void>((resolve) => (saveStarted = resolve));
+    const media: MediaStore = {
+      save: async (messageId) => {
+        saveStarted();
+        await new Promise<void>((resolve) => (releaseSave = resolve));
+        return [`/state/${messageId}.png`];
+      },
+    };
+    const h = harness({ cursors: cursorState.store, rowsFor: async () => newestFirst(mediaRow("301", "ch1")), media });
+
+    h.inbound.start();
+    await started;
+    // The download is in flight: nothing has printed and the cursor must still be behind.
+    expect(h.delivered).toEqual([]);
+    expect(cursorState.writes).toEqual([]);
+
+    releaseSave();
+    await h.inbound.idle();
+
+    expect(h.delivered.map((i) => i.media)).toEqual([["/state/301.png"]]);
+    expect(cursorState.current()).toEqual({ ch1: "301" });
+  });
+
+  test("a text line waits for an earlier message's download instead of overtaking it", async () => {
+    const cursorState = cursorStore({ ch1: "500" });
+    let releaseSave = () => {};
+    let saveStarted = () => {};
+    const started = new Promise<void>((resolve) => (saveStarted = resolve));
+    const order: string[] = [];
+    const media: MediaStore = {
+      save: async (messageId) => {
+        saveStarted();
+        await new Promise<void>((resolve) => (releaseSave = resolve));
+        return [`/state/${messageId}.png`];
+      },
+    };
+    const inbound = new DiscordInbound(
+      silentSocket,
+      "token",
+      inertClock,
+      "self",
+      (i) => order.push(`LINE ${i.messageId}`),
+      () => {},
+      media,
+      cursorState.store,
+      async () => newestFirst(row("502", "ch1"), mediaRow("501", "ch1")),
+      async () => "guild-1",
+    );
+
+    inbound.start();
+    await started;
+    expect(order).toEqual([]);
+
+    releaseSave();
+    await inbound.idle();
+
+    expect(order).toEqual(["LINE 501", "LINE 502"]);
+    expect(cursorState.current()).toEqual({ ch1: "502" });
+  });
+
+  test("a line that never came out leaves the cursor behind, so a restart prints the message again", async () => {
+    const cursorState = cursorStore({ ch1: "400" });
+    const attempts: string[] = [];
+    const events: string[] = [];
+    const inbound = new DiscordInbound(
+      silentSocket,
+      "token",
+      inertClock,
+      "self",
+      () => {
+        attempts.push("line");
+        throw new Error("stdout closed");
+      },
+      (line) => events.push(line),
+      null,
+      cursorState.store,
+      async () => newestFirst(row("401", "ch1")),
+      async () => "guild-1",
+    );
+
+    inbound.start();
+    await inbound.idle();
+
+    expect(attempts).toEqual(["line"]);
+    expect(cursorState.writes).toEqual([]);
+    expect(events.some((e) => e.startsWith("delivery failed: stdout closed"))).toBe(true);
+  });
+
+  test("the line carries the whole text, so a long message is distinguishable from a short one", () => {
+    const text = "x".repeat(4000);
+    const line = formatInbound({
+      source: "guild",
+      channel: "c1",
+      guild: "g1",
+      messageId: "9",
+      author: "someone",
+      authorIsBot: false,
+      text,
+    });
+
+    expect(line).toContain(JSON.stringify(text));
+    expect(line.split("\n")).toHaveLength(1);
   });
 });
