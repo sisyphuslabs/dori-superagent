@@ -67,6 +67,9 @@ const EVENT_READY = "READY";
 const EVENT_MESSAGE_CREATE = "MESSAGE_CREATE";
 
 const DEFAULT_HEARTBEAT_MS = 41_250;
+/** A freshly opened socket that sends no HELLO within this window is dead; nothing else would ever
+ * notice, because the heartbeat and its ack watch only exist once HELLO has arrived. */
+export const HELLO_WAIT_MS = 15_000;
 const MAX_SEEN = 500;
 
 /** Discord caps a messages page at 100; a long outage needs several of them. */
@@ -193,6 +196,9 @@ export const formatInbound = (i: Inbound): string =>
 export class DiscordInbound {
   private socket: GatewaySocket | null = null;
   private beat: unknown;
+  private hello: unknown;
+  /** Bumped on every arm/clear so a callback already queued by the timer cannot act on a later socket. */
+  private helloWait = 0;
   private sequence: number | null = null;
   private sessionId: string | null = null;
   private acked = true;
@@ -238,6 +244,7 @@ export class DiscordInbound {
 
   stop(): void {
     this.stopped = true;
+    this.clearHelloWait();
     if (this.beat !== undefined) this.clock.clearInterval(this.beat);
     this.beat = undefined;
     this.socket?.close();
@@ -252,6 +259,27 @@ export class DiscordInbound {
       if (this.stopped || this.socket !== socket) return;
       this.handle(raw);
     });
+    this.armHelloWait(socket);
+  }
+
+  /** Discord sends HELLO as the first frame on every connection. Without this timer a socket that
+   * connects and then goes silent is indistinguishable from a quiet channel: no heartbeat, no ack
+   * watch, no reconnect, forever. */
+  private armHelloWait(socket: GatewaySocket): void {
+    this.clearHelloWait();
+    const wait = this.helloWait;
+    this.hello = this.clock.setInterval(() => {
+      if (this.stopped || this.socket !== socket || wait !== this.helloWait) return;
+      this.clearHelloWait();
+      this.onEvent(`gateway sent no HELLO within ${HELLO_WAIT_MS / 1000}s; reconnecting`);
+      this.reconnect();
+    }, HELLO_WAIT_MS);
+  }
+
+  private clearHelloWait(): void {
+    this.helloWait++;
+    if (this.hello !== undefined) this.clock.clearInterval(this.hello);
+    this.hello = undefined;
   }
 
   handle(raw: string): void {
@@ -264,6 +292,7 @@ export class DiscordInbound {
     if (typeof payload.s === "number") this.sequence = payload.s;
 
     if (payload.op === OP_HELLO) {
+      this.clearHelloWait();
       this.startHeartbeat(payload.d);
       return;
     }
@@ -484,6 +513,7 @@ export class DiscordInbound {
 
   private reconnect(): void {
     if (this.stopped) return;
+    this.clearHelloWait();
     if (this.beat !== undefined) this.clock.clearInterval(this.beat);
     this.beat = undefined;
     this.socket?.close();
