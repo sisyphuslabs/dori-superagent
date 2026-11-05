@@ -135,6 +135,21 @@ export class Herdr {
     await this.call(["pane", "run", paneId, commandLine]);
   }
 
+  /** Every pane in the session, as herdr reports it. One call, so a sweep does not race a list per pane. */
+  async list(): Promise<{ readonly pane_id: string; readonly agent_status?: string; readonly agent?: string }[]> {
+    const r = await this.call(["pane", "list"]);
+    const panes = r["panes"];
+    return Array.isArray(panes) ? (panes as { readonly pane_id: string; readonly agent_status?: string; readonly agent?: string }[]) : [];
+  }
+
+  /** Only what the terminal is showing now; a dialog scrolled off the visible area is not readable here. */
+  async readVisible(paneId: string): Promise<string> {
+    const full = this.session ? ["--session", this.session] : [];
+    const res = await this.exec("herdr", [...full, "pane", "read", paneId, "--source", "visible"]);
+    if (res.code !== 0) throw new HerdrError(["pane", "read", paneId], res);
+    return res.stdout;
+  }
+
   async status(paneId: string): Promise<AgentStatus> {
     let pane: Record<string, unknown>;
     try {

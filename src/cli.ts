@@ -2,8 +2,9 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
-  defaultDeps, done, dutyTick, mergeGate, ready, Refusal, report, review, send, sendToShell, startLane, ROLES, type Deps, type SendResult,
+  blockedPanes, defaultDeps, done, dutyTick, mergeGate, notifyBlocked, ready, Refusal, report, review, send, sendToShell, startLane, ROLES, type Deps, type SendResult,
 } from "./harness.ts";
+import { blockedPath, blockedStateAt, commitBlockedAlerts, formatBlocked, planBlockedAlerts } from "./blocked.ts";
 import { shq } from "./herdr.ts";
 import { backlogAdd, backlogDecide, backlogDrop, backlogImport, loopTick, msUntilNext, summary, HOUR, IMPORT_LIMIT } from "./loop.ts";
 import type { Role } from "./store.ts";
@@ -28,13 +29,15 @@ const USAGE = `dori - a proactive multi-session harness on herdr + omo
   dori review <owner/repo#N> [--model M]      fresh omo reviewer at the exact head -> receipt
   dori merge <owner/repo#N> [--dry-run]       CLEAR receipt at head + green checks -> squash merge
   dori done <key>                             lead closes a READY lane
+  dori blocked                                panes waiting on a permission dialog, with the dialog text on screen
+  dori blocked --interval S [--notify CMD]    keep watching; run CMD with {text} {key} {pane} for each new one
   dori status
 
 --text may be omitted to read the message from stdin.
 send, report and ready exit 3 and print HELD <target> when the delivery may or may not have reached the pane:
 it is held and never resent, so do not send it again. QUEUED (exit 0) means it waits in the pane's inbox.`;
 
-const COMMANDS = new Set(["up", "role", "start", "report", "ready", "send", "duty", "review", "merge", "done", "status", "loop", "backlog"]);
+const COMMANDS = new Set(["up", "role", "start", "report", "ready", "send", "duty", "review", "merge", "done", "blocked", "status", "loop", "backlog"]);
 
 type Args = { pos: string[]; flags: Map<string, string[]> };
 
@@ -273,6 +276,26 @@ export async function main(argv: readonly string[], d: Deps = defaultDeps()): Pr
       await done(d, need(x, "lane key"));
       console.log(`DONE ${x}`);
       return 0;
+    case "blocked": {
+      const notify = one(a, "notify");
+      const interval = Number(one(a, "interval") ?? "0");
+      if (!(Number.isFinite(interval) && interval >= 0)) throw new Refusal("--interval must be a nonnegative number of seconds");
+      const path = blockedPath(d.store.root);
+      for (;;) {
+        const blocked = await blockedPanes(d);
+        if (!notify) {
+          if (!blocked.length) console.log("BLOCKED none");
+          for (const entry of blocked) console.log(formatBlocked(entry, blockedStateAt(path, entry.pane)));
+        } else {
+          const plan = planBlockedAlerts(path, blocked, d.now());
+          const accepted = await notifyBlocked(plan.fresh, notify);
+          for (const entry of plan.fresh) console.log(`${accepted.has(entry.pane) ? "BLOCKED_NOTIFIED" : "BLOCKED_NOTIFY_FAILED"} ${entry.pane}`);
+          commitBlockedAlerts(path, plan, accepted);
+        }
+        if (!(interval > 0)) return 0;
+        await Bun.sleep(interval * 1000);
+      }
+    }
     case "status":
       status(d);
       return 0;

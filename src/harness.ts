@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { cpus, freemem, loadavg, totalmem } from "node:os";
 import { join, resolve } from "node:path";
 import { DeliveryUncertain, Herdr, HerdrError, omoScreenIdle, shq, spawnExec, type AgentStatus, type Exec } from "./herdr.ts";
+import { blockedMessage, blockedPath, commitBlockedAlerts, parsePanePrompt, planBlockedAlerts, type BlockedPane } from "./blocked.ts";
 import { KEY_RE, reservedKey, Store, type DeliveryAttempt, type HostLoad, type Lane, type QueuedMessage, type Role } from "./store.ts";
 import { Telemetry, type MergeOutcome, type Usage } from "./telemetry.ts";
 
@@ -312,6 +313,86 @@ export async function done(d: Deps, key: string): Promise<void> {
 
 export type DutyEvent = { lane?: string; pane?: string; action: string; detail?: string };
 
+/** Every pane herdr reports as waiting on a dialog, with its lane key when one owns the pane. */
+export async function blockedPanes(d: Deps): Promise<readonly BlockedPane[]> {
+  const keys = new Map<string, string>();
+  for (const lane of d.store.lanes()) {
+    if (lane.status === "working" || lane.status === "waiting") keys.set(lane.paneId, lane.key);
+  }
+  const out: BlockedPane[] = [];
+  for (const pane of await d.herdr.list()) {
+    if (pane.agent_status !== "blocked") continue;
+    let prompt = null;
+    try {
+      prompt = parsePanePrompt(await d.herdr.readVisible(pane.pane_id));
+    } catch {
+      // An unreadable screen still leaves the pane needing attention; the alert says the list was not readable.
+    }
+    const key = keys.get(pane.pane_id);
+    out.push({ pane: pane.pane_id, ...(key ? { key } : {}), prompt });
+  }
+  return out;
+}
+
+/**
+ * Reports panes waiting on a permission dialog. The lead is told directly, except about its own pane: a message queued
+ * for a blocked lead would sit in its inbox until someone answers the dialog, so the duty event list still names it
+ * (printed by the duty pane) and `dori blocked` shows it, but nothing is queued for that pane.
+ */
+export async function blockedTick(d: Deps): Promise<DutyEvent[]> {
+  const events: DutyEvent[] = [];
+  const path = blockedPath(d.store.root);
+  const plan = planBlockedAlerts(path, await blockedPanes(d), d.now());
+  const lead = d.store.roles().lead;
+  const delivered = new Set<string>();
+  for (const entry of plan.fresh) {
+    // A message queued for a blocked lead would wait in its own inbox, so only the duty pane's event line names it.
+    if (entry.pane === lead) {
+      delivered.add(entry.pane);
+      events.push({ pane: entry.pane, action: "blocked-lead", detail: entry.prompt?.title ?? "blocked (no answer list on screen)" });
+      continue;
+    }
+    try {
+      await tellLead(d, blockedMessage(entry), "duty");
+      delivered.add(entry.pane);
+    } catch (e) {
+      events.push({ pane: entry.pane, action: "blocked-alert-failed", detail: failureDetail(e) });
+    }
+    events.push({ pane: entry.pane, ...(entry.key ? { lane: entry.key } : {}), action: "blocked", detail: entry.prompt?.title ?? "blocked (no answer list on screen)" });
+  }
+  // A record means every channel went out: a pane whose lead alert failed, or whose hook failed, is retried next tick.
+  const accepted = await notifyBlocked(plan.fresh);
+  for (const entry of plan.fresh) if (accepted.has(entry.pane)) delivered.add(entry.pane);
+  commitBlockedAlerts(path, plan, delivered);
+  return events;
+}
+
+/**
+ * Runs `$DORI_BLOCKED_NOTIFY` (or `command`, when given) once per newly blocked pane, with `{key-or-pane} {pane}` as
+ * argv and the alert line on stdin, so the message never passes through a shell. An argv template is the same shape
+ * the repo's other hooks use, so a Discord route is `dori send discord --to <channel> --text {text}` rather than a
+ * second client. Returns the panes whose notification was accepted (exit 0); no hook accepts everything, since nothing
+ * was asked to send.
+ */
+export async function notifyBlocked(entries: readonly BlockedPane[], template = process.env["DORI_BLOCKED_NOTIFY"]): Promise<ReadonlySet<string>> {
+  if (!template) return new Set(entries.map((e) => e.pane));
+  const accepted = new Set<string>();
+  for (const entry of entries) {
+    const argv = template.trim().split(/\s+/).map((part) =>
+      part.replace(/\{(text|key|pane)\}/g, (_, name: string) => (name === "text" ? blockedMessage(entry) : name === "key" ? entry.key ?? entry.pane : entry.pane)));
+    // A mistyped command is a failed notification, never a crash that ends the duty tick: the alert is retried next pass.
+    let code = 127;
+    try {
+      const child = Bun.spawn(argv, { stdin: "ignore", stdout: "inherit", stderr: "inherit" });
+      code = await child.exited;
+    } catch (e) {
+      process.stderr.write(`blocked-alert hook ${argv[0]} could not start: ${e instanceof Error ? e.message : String(e)}\n`);
+    }
+    if (code === 0) accepted.add(entry.pane);
+  }
+  return accepted;
+}
+
 /** A short one-line reason. A HerdrError message carries the whole argv (the queued text), so use herdr's own output. */
 function failureDetail(e: unknown): string {
   if (e instanceof DeliveryUncertain) e = e.failure;
@@ -326,6 +407,7 @@ export async function dutyTick(d: Deps): Promise<DutyEvent[]> {
   const stop = d.store.stop("duty");
   if (stop) return [{ action: "stopped", detail: stop.reason }];
   const events: DutyEvent[] = [];
+  events.push(...(await blockedTick(d)));
   for (const paneId of d.store.inboxPanes()) {
     try {
       const result = await flushInbox(d, paneId);

@@ -7,7 +7,7 @@ import { Store, type HostLoad } from "../src/store.ts";
 import type { DutyCounts, TelemetryEvent, Usage } from "../src/telemetry.ts";
 
 /** `screen` is what `pane read` returns; undefined makes the read fail. */
-type Pane = { status: AgentStatus; received: string[]; ran: string[]; screen?: string | undefined; foreground?: string | { name: string; argv: string[] }[] | undefined };
+type Pane = { status: AgentStatus; received: string[]; ran: string[]; pressed: string[][]; screen?: string | undefined; foreground?: string | { name: string; argv: string[] }[] | undefined };
 
 export class World {
   panes = new Map<string, Pane>();
@@ -37,7 +37,7 @@ export class World {
   reviewer: (argv: readonly string[]) => { code: number; stdout: string } = () => ({ code: 0, stdout: "VERDICT: CLEAR" });
 
   addPane(id: string, status: AgentStatus = "idle"): Pane {
-    const p = { status, received: [], ran: [] };
+    const p = { status, received: [], ran: [], pressed: [] };
     this.panes.set(id, p);
     return p;
   }
@@ -48,6 +48,13 @@ export class World {
     if (cmd !== "herdr") return { ...this.reviewer(argv), stderr: "" };
     const ok = (result: unknown) => ({ code: 0, stdout: JSON.stringify({ result }), stderr: "" });
     const [group, verb, id] = argv;
+    if (group === "pane" && verb === "list") {
+      return ok({
+        panes: [...this.panes].map(([paneId, p]) => ({
+          pane_id: paneId, agent: p.status === "shell" ? null : "pi", agent_status: p.status, workspace_id: "w1",
+        })),
+      });
+    }
     if (group === "pane" && verb === "process-info") {
       const target = this.panes.get(String(argv[3]));
       if (!target || this.processInfoFails) return { code: 1, stdout: "", stderr: "process-info failed" };
@@ -80,6 +87,7 @@ export class World {
     if (group === "pane" && verb === "send-text") { pane.received.push(String(argv[3])); return ok({}); }
     if (group === "pane" && verb === "send-keys") {
       if (this.keyFails > 0) { this.keyFails--; return { code: 1, stdout: "", stderr: "key press failed" }; }
+      pane.pressed.push(argv.slice(3));
       return ok({});
     }
     if (group === "agent" && verb === "prompt") {
