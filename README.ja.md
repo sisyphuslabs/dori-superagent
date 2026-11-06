@@ -140,7 +140,7 @@ dori done fix-flaky-login            # closes the lane's pane; only a READY lane
 
 READY にはエビデンスが要ります。`dori ready` は、`--evidence` のリンクが一つもないか、最終回答のテキストがなければ拒否します（`src/harness.ts` の `ready()`）。テキストとリンクは lane レコードの `final` に保存され、`dori done` は `ready` でない lane を拒否します。記録された回答なしに閉じる lane はありません。
 
-忙しいペインには割り込みません。`dori send` はまず herdr にペインのエージェント状態を問い合わせます。`idle`、`done`、素のシェルならその場で届け、それ以外は `~/.dori/inbox/` のキューに入れて `QUEUED` と表示します。duty ループはペインが idle になった時点でキューをまとめて一通のメッセージとして届けます。その先頭は "N messages arrived while you were busy" です（`src/harness.ts` の `send()` と `flushInbox()`）。`dori done` も同じ流儀で待ちます。herdr が working または blocked と報告するペインは閉じません。
+忙しいペインには割り込みません。`dori send` はまず herdr にペインのエージェント状態を問い合わせます。`idle` か `done` ならその場で届け、それ以外は `~/.dori/inbox/` のキューに入れて `QUEUED` と表示します。手前でエージェントが動いていないペイン（エージェントが終了した、または Ctrl+Z で止まってシェルが手前に出た状態）には決して入力しません。シェルに入力したテキストはコマンドとして実行されるからです。そのペイン宛てのメッセージはキューに残り、エージェントが戻るまで duty ループが `inbox-held` を表示します。素のシェルにあえて入力するときは、運用者が `--to-shell` を付けます。その一通だけに効き、キューにあるメッセージには効きません。duty ループはペインが idle になった時点でキューをまとめて一通のメッセージとして届けます。その先頭は "N messages arrived while you were busy" です（`src/harness.ts` の `send()` と `flushInbox()`）。`dori done` も同じ流儀で待ちます。herdr が working または blocked と報告するペインは閉じません。
 
 10 分、20 分、40 分で催促します。`src/harness.ts` の `NUDGE_MINUTES = [10, 20, 40]` です。10 分間報告がなく、ペインも working でない lane は、自分のペインに `prompts/nudge.md` を受け取ります。20 分でもう一度。40 分で duty ループは催促をやめ、lead に `[ESCALATE <key>]` を送ります。`working` のペインはアイドル時間をリセットし、`--status waiting` で報告した lane やペインが `blocked` の lane には触れません。新しい報告があれば催促の回数は 0 に戻り、ペインが消えれば `[LOST <key>]` として報告されます。
 
@@ -203,7 +203,7 @@ dori は omo と同じやり方で匿名の利用回数を送ります。OTLP/HT
 
 ## テスト
 
-リポジトリのルートで `bun test ./test/` を実行すると、ハーネスの 57 個のテストが走ります。モデルは呼びません。素の `bun test` だと Dori モードのテストも拾います。
+リポジトリのルートで `bun test ./test/` を実行すると、ハーネスの 76 個のテストが走ります。モデルは呼びません。素の `bun test` だと Dori モードのテストも拾います。
 
 ハーネスのユニットテスト 8 個（`test/harness.test.ts`）は偽の herdr（`test/fake.ts`）に対して走ります。`herdr` と `gh` のバイナリの代わりを務めるレコーダーで、エージェント状態を設定できるペインを持ち、テストから進められる時計を持っています。カバーするのは、lane の開始と READY、忙しい lead に対するキューと一括配信、未知の宛先の拒否、10 分と 20 分の催促と 40 分のエスカレーションと WAITING の lane の放置、working と lost の状態、マージゲートの全分岐（receipt なし、BLOCK、空のチェック一覧、赤いチェック、全部スキップ、CLEAR とグリーン）、そして VERDICT 行のないレビュアーです。
 
@@ -213,7 +213,7 @@ dori は omo と同じやり方で匿名の利用回数を送ります。OTLP/HT
 
 エンドツーエンドテスト 2 個（`test/e2e.test.ts`）のうち 1 個目は、隔離した名前付きセッションで本物の herdr サーバーを起動し、ワークスペースを作り、lead ペインを登録して、omo の代わりに `test/fixtures/fake-agent.sh` をエージェントにした lane を開始します。このスクリプトは brief を読んで `dori report` と `dori ready` を呼び、テストは `[START]`、`[REPORT]`、`[READY]` が lead ペインに届くことと、`dori done` が lane を閉じることを確認します。2 個目はバックログに項目を足して `dori loop --once` を実行し、ループが始めた lane が READY まで行くこと、`[LOOP ...]` が lead ペインに届くこと、`dori loop stop` の後の実行が何もしないことを確認します。どちらも PATH に `herdr` がなければスキップされ、`DORI_TELEMETRY=0` で走ります。`bun run typecheck` は `tsc --noEmit` を実行します。
 
-Dori モードには、偽の herdr、git、gh に対する独自のテストが 233 個あります。
+Dori モードには、偽の herdr、git、gh に対する独自のテストが 254 個あります。
 
 ```sh
 cd skills/dori-mode/scripts && bun install && bun test

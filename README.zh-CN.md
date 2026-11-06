@@ -138,7 +138,7 @@ dori done fix-flaky-login            # closes the lane's pane; only a READY lane
 
 READY 必须带证据。没有至少一个 `--evidence` 链接，或者没有最终答案文本，`dori ready` 就会拒绝（`src/harness.ts` 里的 `ready()`）。文本和链接作为 `final` 存在 lane 记录上；`dori done` 拒绝任何状态不是 `ready` 的 lane，所以没有哪条 lane 能在没留下答案的情况下关闭。
 
-忙碌的窗格不会被打断。`dori send` 先向 herdr 查询窗格里 Agent 的状态。`idle`、`done` 或普通 shell 立刻收到消息；其他状态下消息进入 `~/.dori/inbox/` 排队，命令打印 `QUEUED`。等窗格空闲下来，duty 循环把队列合成一条消息送达，开头是 "N messages arrived while you were busy"（`src/harness.ts` 里的 `send()` 和 `flushInbox()`）。`dori done` 也是同样的等法：herdr 报告为 working 或 blocked 的窗格，它拒绝关闭。
+忙碌的窗格不会被打断。`dori send` 先向 herdr 查询窗格里 Agent 的状态。`idle` 或 `done` 立刻收到消息；其他状态下消息进入 `~/.dori/inbox/` 排队，命令打印 `QUEUED`。前台没有 Agent 在运行的窗格（Agent 已退出，或被 Ctrl+Z 挂起，shell 回到前台）绝不会被输入文字，因为输入到 shell 的文字会被当作命令执行：发给它的消息留在队列里，duty 循环会打印 `inbox-held`，直到窗格里重新有 Agent。确实要往普通 shell 里输入时，由操作者加上 `--to-shell`：只对这一条消息生效，不会作用于队列里的消息。等窗格空闲下来，duty 循环把队列合成一条消息送达，开头是 "N messages arrived while you were busy"（`src/harness.ts` 里的 `send()` 和 `flushInbox()`）。`dori done` 也是同样的等法：herdr 报告为 working 或 blocked 的窗格，它拒绝关闭。
 
 10 分钟、20 分钟催，40 分钟上报。`src/harness.ts` 里有 `NUDGE_MINUTES = [10, 20, 40]`。一条 lane 10 分钟没有汇报、窗格也不在 working，就会在自己的窗格里收到 `prompts/nudge.md`；20 分钟时再收一次；到 40 分钟，duty 循环不再催，改为给 lead 发 `[ESCALATE <key>]`。`working` 状态的窗格会重置空闲计时；汇报过 `--status waiting` 或窗格处于 `blocked` 的 lane 不会被打扰；任何一次新汇报都把催促次数清零；窗格消失则报告为 `[LOST <key>]`。
 
@@ -201,7 +201,7 @@ dori 和 omo 用同一种方式发送匿名的使用计数：OTLP/HTTP JSON 日�
 
 ## 测试
 
-在仓库根目录跑 `bun test ./test/`，执行 harness 的 57 个测试，不调用任何模型。直接跑 `bun test` 会把 Dori 模式的测试也带上。
+在仓库根目录跑 `bun test ./test/`，执行 harness 的 76 个测试，不调用任何模型。直接跑 `bun test` 会把 Dori 模式的测试也带上。
 
 8 个 harness 单元测试（`test/harness.test.ts`）跑在一个假 herdr（`test/fake.ts`）上：它是一个录制器，顶替 `herdr` 和 `gh` 二进制，持有若干 Agent 状态可设置的窗格，还带一个由测试拨动的时钟。覆盖的场景有：lane 启动与 READY，lead 忙碌时的排队与成批送达，拒绝未知目标，10 和 20 分钟的催促、40 分钟的上报以及 WAITING 的 lane 不被打扰，working 和 lost 状态，合并门禁的每一个分支（没有回执、BLOCK、空检查列表、一项红色检查、全部跳过、CLEAR 加全绿），以及一个没有 VERDICT 行的评审者。
 
@@ -211,7 +211,7 @@ dori 和 omo 用同一种方式发送匿名的使用计数：OTLP/HTTP JSON 日�
 
 2 个端到端测试（`test/e2e.test.ts`）。第一个在隔离的具名会话里起一个真实的 herdr 服务器，创建工作区，注册 lead 窗格，再启动一条 lane，其 Agent 用 `test/fixtures/fake-agent.sh` 顶替 omo。脚本读取 brief，调用 `dori report` 和 `dori ready`；测试检查 `[START]`、`[REPORT]`、`[READY]` 是否到达 lead 窗格，以及 `dori done` 是否关掉了这条 lane。第二个添加一个待办项目，运行 `dori loop --once`，检查循环启动的 lane 走到 READY、`[LOOP ...]` 到达 lead 窗格，以及 `dori loop stop` 之后的一轮什么也不做。PATH 上没有 `herdr` 时两者都会被跳过；两者都以 `DORI_TELEMETRY=0` 运行。`bun run typecheck` 执行 `tsc --noEmit`。
 
-Dori 模式有自己的 233 个测试，跑在假的 herdr、git 和 gh 上：
+Dori 模式有自己的 254 个测试，跑在假的 herdr、git 和 gh 上：
 
 ```sh
 cd skills/dori-mode/scripts && bun install && bun test

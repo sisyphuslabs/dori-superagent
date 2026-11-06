@@ -140,7 +140,7 @@ dori done fix-flaky-login            # closes the lane's pane; only a READY lane
 
 READY에는 증거가 붙어야 합니다. `dori ready`는 `--evidence` 링크가 하나도 없거나 최종 답변 텍스트가 없으면 거절합니다(`src/harness.ts`의 `ready()`). 텍스트와 링크는 레인 레코드에 `final`로 저장되고, `dori done`은 `ready`가 아닌 레인을 거절합니다. 그래서 답변이 기록되지 않은 채 닫히는 레인은 없습니다.
 
-바쁜 pane은 건드리지 않습니다. `dori send`는 먼저 herdr에 그 pane의 에이전트 상태를 묻습니다. `idle`, `done`, 아니면 그냥 셸이면 바로 전달하고, 그 밖의 상태면 `~/.dori/inbox/`에 큐로 넣고 `QUEUED`를 출력합니다. pane이 idle이 되면 듀티 루프가 큐를 메시지 하나로 전달하는데, 그 메시지는 "N messages arrived while you were busy"로 시작합니다(`src/harness.ts`의 `send()`와 `flushInbox()`). `dori done`도 같은 식으로 기다립니다. herdr가 working이나 blocked라고 하는 pane은 닫지 않습니다.
+바쁜 pane은 건드리지 않습니다. `dori send`는 먼저 herdr에 그 pane의 에이전트 상태를 묻습니다. `idle`이나 `done`이면 바로 전달하고, 그 밖의 상태면 `~/.dori/inbox/`에 큐로 넣고 `QUEUED`를 출력합니다. 에이전트가 앞에서 돌고 있지 않은 pane(에이전트가 종료됐거나 Ctrl+Z로 멈춰 셸이 앞에 나온 경우)에는 절대 입력하지 않습니다. 셸에 입력한 텍스트는 명령으로 실행되기 때문입니다. 그 pane의 메시지는 큐에 남고, 에이전트가 다시 뜰 때까지 듀티 루프가 `inbox-held`를 출력합니다. 일반 셸에 일부러 입력하려면 운영자가 `--to-shell`을 붙입니다. 그 메시지 하나에만 적용되고 큐에 있는 메시지에는 적용되지 않습니다. pane이 idle이 되면 듀티 루프가 큐를 메시지 하나로 전달하는데, 그 메시지는 "N messages arrived while you were busy"로 시작합니다(`src/harness.ts`의 `send()`와 `flushInbox()`). `dori done`도 같은 식으로 기다립니다. herdr가 working이나 blocked라고 하는 pane은 닫지 않습니다.
 
 nudge는 10분, 20분, 40분입니다. `src/harness.ts`의 `NUDGE_MINUTES = [10, 20, 40]`입니다. 10분 동안 보고가 없고 pane도 working이 아닌 레인은 자기 pane에 `prompts/nudge.md`를 받습니다. 20분에 한 번 더 받습니다. 40분이 되면 듀티 루프는 nudge를 그만두고 리드에게 `[ESCALATE <key>]`를 보냅니다. `working`인 pane은 idle 시계가 되돌아가고, `--status waiting`으로 보고했거나 pane이 `blocked`인 레인은 건드리지 않고, 새 보고가 오면 nudge 횟수가 0으로 돌아가고, pane이 사라지면 `[LOST <key>]`로 보고됩니다.
 
@@ -203,7 +203,7 @@ dori는 omo와 같은 방식으로 익명 사용 횟수를 보냅니다. OTLP/HT
 
 ## 테스트
 
-저장소 루트에서 `bun test ./test/`를 치면 하네스 테스트 57개가 돌고, 모델은 부르지 않습니다. 그냥 `bun test`를 치면 Dori 모드 테스트까지 같이 돕니다.
+저장소 루트에서 `bun test ./test/`를 치면 하네스 테스트 76개가 돌고, 모델은 부르지 않습니다. 그냥 `bun test`를 치면 Dori 모드 테스트까지 같이 돕니다.
 
 하네스 단위 테스트 8개(`test/harness.test.ts`)는 가짜 herdr(`test/fake.ts`)를 상대로 돕니다. `herdr`와 `gh` 바이너리 대신 들어가는 레코더로, 에이전트 상태를 바꿀 수 있는 pane들을 들고 있고, 테스트가 손으로 돌리는 시계가 있습니다. 다루는 것은 레인 시작과 READY, 바쁜 리드의 큐와 묶음 전달, 모르는 대상 거절, 10분과 20분의 nudge와 40분의 에스컬레이션과 WAITING 레인 제외, working과 lost 상태, 머지 게이트의 모든 분기(영수증 없음, BLOCK, 빈 체크 목록, 빨간 체크, 전부 skip, CLEAR + 녹색), VERDICT 줄 없는 리뷰어입니다.
 
@@ -213,7 +213,7 @@ dori는 omo와 같은 방식으로 익명 사용 횟수를 보냅니다. OTLP/HT
 
 엔드투엔드 테스트 2개(`test/e2e.test.ts`) 중 첫 번째는 격리된 이름의 세션에 진짜 herdr 서버를 띄우고, 워크스페이스를 만들고, 리드 pane을 등록하고, omo 대신 `test/fixtures/fake-agent.sh`를 에이전트로 쓰는 레인을 시작합니다. 이 스크립트는 브리프를 읽고 `dori report`와 `dori ready`를 부르고, 테스트는 `[START]`, `[REPORT]`, `[READY]`가 리드 pane에 도착하는지와 `dori done`이 레인을 닫는지 확인합니다. 두 번째는 백로그 항목을 넣고 `dori loop --once`를 돌린 뒤, 루프가 시작한 레인이 READY까지 가는지, `[LOOP ...]`가 리드 pane에 도착하는지, `dori loop stop` 뒤의 실행이 아무것도 하지 않는지 확인합니다. 둘 다 PATH에 `herdr`가 없으면 건너뛰고, `DORI_TELEMETRY=0`으로 돕니다. `bun run typecheck`는 `tsc --noEmit`입니다.
 
-Dori 모드에는 가짜 herdr, git, gh를 상대로 하는 자체 테스트 233개가 있습니다.
+Dori 모드에는 가짜 herdr, git, gh를 상대로 하는 자체 테스트 254개가 있습니다.
 
 ```sh
 cd skills/dori-mode/scripts && bun install && bun test

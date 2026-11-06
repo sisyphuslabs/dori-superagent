@@ -6,6 +6,7 @@ import { bootCheck, type Manifest, type Monitor, monitorCleanup, readMonitorMani
 import { Slack } from "../src/messenger/slack.ts";
 import { type Lane, type LaneStatus, Registry } from "../src/registry.ts";
 import { Reports } from "../src/reports.ts";
+import { Worklog } from "../src/worklog.ts";
 import { depsFor, fakeClock, newWorld, withState, type World } from "./fakes.ts";
 
 const T0 = Date.parse("2026-01-01T12:00:00Z");
@@ -32,7 +33,7 @@ const snapshot = (dir: string) => readdirSync(dir, { recursive: true, withFileTy
 const bootDeps = (world: World, slack: () => Promise<{ userId: string; teamId: string } | null> = async () => null) => {
   const sessionsDir = join(state.dir, "sessions");
   const deps = depsFor(world, fakeClock(T0), state.dir, { sessionsDir, leadPane: "w2:p1" });
-  return { ...deps, reports: new Reports(state.dir), slack, sessionsDir };
+  return { ...deps, reports: new Reports(state.dir), worklog: new Worklog(state.dir), slack, sessionsDir };
 };
 
 test("vanished, live and unassigned panes reconcile without mutating the lane records", () => {
@@ -168,6 +169,98 @@ test("boot on a state dir with no lanes directory leaves it byte-identical", asy
   expect(snapshot(state.dir)).toEqual(before);
 });
 
+test("boot prints each open worklog item with its Next line, skips closed ones, and writes nothing", async () => {
+  // Given one item with a next step, one without, and one closed.
+  const world = newWorld();
+  const deps = bootDeps(world);
+  const release = deps.worklog.add("Ship the release notes", "slack:D1/100.1", T0);
+  deps.worklog.next(release.id, "wait for CI on #12, then merge", T0 + 1);
+  const fresh = deps.worklog.add("Look at the flaky upload test", "slack:D1/100.2", T0 + 2);
+  const old = deps.worklog.add("Rename the bot", "slack:D1/100.3", T0 + 3);
+  deps.worklog.close(old.id, "renamed; owner confirmed", T0 + 4);
+  const before = snapshot(state.dir);
+  // When boot runs.
+  const result = await bootCheck(deps);
+  // Then the open items are listed oldest first with their Next line, the closed one is absent, and no file changed.
+  expect(result.exitCode).toBe(0);
+  const at = result.lines.indexOf("WORKLOG open=2");
+  expect(result.lines.slice(at, at + 3)).toEqual([
+    "WORKLOG open=2",
+    `OPEN ${release.id} "Ship the release notes" source="slack:D1/100.1" next="wait for CI on #12, then merge"`,
+    `OPEN ${fresh.id} "Look at the flaky upload test" source="slack:D1/100.2" next=""`,
+  ]);
+  expect(result.lines.some((l) => l.includes(old.id))).toBe(false);
+  expect(snapshot(state.dir)).toEqual(before);
+});
+
+test("a damaged worklog line is named and makes boot incomplete; the other items still print", async () => {
+  // Given one item and a line after it that is not a record at all.
+  const deps = bootDeps(newWorld());
+  const item = deps.worklog.add("Keep this", "slack:D1/100.1", T0);
+  writeFileSync(deps.worklog.path, `${readFileSync(deps.worklog.path, "utf8")}garbage\n`);
+  // When boot runs; then the item prints, the bad line is named, and the exit is 1.
+  const result = await bootCheck(deps);
+  expect(result.lines).toContain(`OPEN ${item.id} "Keep this" source="slack:D1/100.1" next=""`);
+  expect(result.lines.filter((line) => line.startsWith(`WORKLOG damaged ${deps.worklog.path}:2: JSON Parse error`))).toHaveLength(1);
+  expect(result.exitCode).toBe(1);
+});
+
+test("torn writes and a duplicate close from racing writers keep boot clean and the item list right", async () => {
+  // Given a closed item with a second close after it, a torn line followed by a valid add, and a torn final line.
+  const deps = bootDeps(newWorld());
+  const log = deps.worklog;
+  const done = log.add("Answered", "slack:D1/100.1", T0);
+  log.close(done.id, "first answer", T0 + 1);
+  const close = JSON.stringify({ op: "close", id: done.id, at: new Date(T0 + 2).toISOString(), result: "second answer" });
+  writeFileSync(log.path, `${readFileSync(log.path, "utf8")}${close}\n{"op":"note","id":"${done.id}","at`);
+  const open = log.add("Still open", "slack:D1/100.2", T0 + 3);
+  writeFileSync(log.path, `${readFileSync(log.path, "utf8")}{"op":"add","id":"0000be`);
+  // When boot runs.
+  const result = await bootCheck(deps);
+  // Then nothing is damaged, the exit is 0, the open item prints, and the first close stands.
+  expect(result.lines.filter((line) => line.startsWith("WORKLOG "))).toEqual(["WORKLOG open=1"]);
+  expect(result.lines).toContain(`OPEN ${open.id} "Still open" source="slack:D1/100.2" next=""`);
+  expect(result.exitCode).toBe(0);
+  expect(log.read()).toEqual({
+    items: [
+      { id: done.id, title: "Answered", source: "slack:D1/100.1", openedAt: new Date(T0).toISOString(), notes: [], closedAt: new Date(T0 + 1).toISOString(), result: "first answer" },
+      { id: open.id, title: "Still open", source: "slack:D1/100.2", openedAt: new Date(T0 + 3).toISOString(), notes: [] },
+    ],
+    problems: [],
+    warnings: [],
+  });
+});
+
+test("a next and a note that raced a close print as warnings and keep boot clean; the close stands", async () => {
+  // Given a closed item with a next and a note appended after the close by writers that saw it open.
+  const deps = bootDeps(newWorld());
+  const log = deps.worklog;
+  const done = log.add("Answered", "slack:D1/100.1", T0);
+  log.close(done.id, "answered", T0 + 1);
+  const late = (op: string, at: number) => JSON.stringify({ op, id: done.id, at: new Date(at).toISOString(), text: `late ${op}` });
+  writeFileSync(log.path, `${readFileSync(log.path, "utf8")}${late("next", T0 + 2)}\n${late("note", T0 + 3)}\n`);
+  // When boot runs.
+  const result = await bootCheck(deps);
+  // Then both are named as warnings, nothing is damaged, the item stays closed, and the exit is 0.
+  expect(result.lines.filter((line) => line.startsWith("WORKLOG "))).toEqual([
+    "WORKLOG open=0",
+    `WORKLOG warning ${log.path}:3: worklog item ${done.id} was already closed; next ignored`,
+    `WORKLOG warning ${log.path}:4: worklog item ${done.id} was already closed; note ignored`,
+  ]);
+  expect(result.lines.at(-1)).toBe("BOOT checked read-only; nothing restarted, written or stopped");
+  expect(result.exitCode).toBe(0);
+});
+
+test("a worklog source that spells out fields of its own stays one quoted value on its OPEN line", async () => {
+  // Given an item whose source tries to add a next field and a second OPEN item.
+  const deps = bootDeps(newWorld());
+  const item = deps.worklog.add("Real request", 'x next="done" OPEN deadbeef', T0);
+  // When boot runs; then the source is printed quoted, so the line still has exactly one source and one next.
+  const result = await bootCheck(deps);
+  expect(result.lines).toContain(`OPEN ${item.id} "Real request" source="x next=\\"done\\" OPEN deadbeef" next=""`);
+  expect(result.lines.filter((line) => line.startsWith("OPEN "))).toHaveLength(1);
+});
+
 test("a closed lane owns no pane, so a pane left behind by a failed close is unregistered", async () => {
   // Given a closed lane whose pane is still open, and a working lane on a live pane.
   const world = newWorld();
@@ -220,6 +313,24 @@ test("a verified-done lane whose pane is gone is not flagged VANISHED", async ()
   const result = await bootCheck(deps);
   expect(result.lines.filter((l) => l.startsWith("VANISHED"))).toEqual(["VANISHED working pane=w1:p8 status=working; registry and worktrees preserved; no relaunch"]);
   expect(result.lines).toContain("PANES lead=w2:p1 leadState=live registeredLive=0 vanished=1 unregistered=1");
+});
+
+test("a journal-done lane whose pane is gone is finished in both checks: not VANISHED, and its watch is offered for cleanup", async () => {
+  // Given a working lane whose journal says done, on a pane that no longer exists, with a persistent watch naming it.
+  const world = newWorld();
+  world.panes = [{ pane_id: "w2:p1", workspace_id: "w2" }];
+  const deps = bootDeps(world);
+  await deps.registry.write(launched("reported", "working", "w1:p9"));
+  deps.reports.report("reported", "done", "finished", T0);
+  const terminal = join(deps.sessionsDir, "lead", "extensions", "terminal");
+  mkdirSync(terminal, { recursive: true });
+  writeFileSync(join(terminal, "owner.json"), JSON.stringify(manifest([{ command: "dori watch reported", monitorId: "mon_REPORTED" }]).data));
+  // When boot runs; then the lane is not flagged and its watch is a cleanup candidate.
+  const result = await bootCheck(deps);
+  expect(result.lines.some((l) => l.startsWith("VANISHED"))).toBe(false);
+  expect(result.lines).toContain("PANES lead=w2:p1 leadState=live registeredLive=0 vanished=0 unregistered=1");
+  expect(result.lines).toContain("MONITORS cleanupCandidates=1 deliveryPaused=0 expired=0 (from metadata; liveness unverified)");
+  expect(result.lines).toContain("STOP in the owner session only: kill_bash({\"bash_id\":\"mon_REPORTED\"})");
 });
 
 test("a failed pane list stays unknown instead of declaring every lane vanished", async () => {
@@ -292,9 +403,10 @@ test("a corrupt journal is reported for its lane and does not stop the check", a
   await deps.registry.write(launched("broken"));
   deps.reports.report("broken", "milestone", "started", T0);
   writeFileSync(deps.reports.path("broken"), `${readFileSync(deps.reports.path("broken"), "utf8")}{partial\n`);
-  // When boot runs; then the lane is named, the rest still runs, and the exit is incomplete.
+  // When boot runs; then the lane is named with the error kind and no local path, the rest still runs, and the exit is incomplete.
   const result = await bootCheck(deps);
-  expect(result.lines.some((l) => l.startsWith("JOURNAL-ERROR broken:"))).toBe(true);
+  expect(result.lines).toContain("JOURNAL-ERROR broken kind=invalid-journal");
+  expect(result.lines.join("\n")).not.toContain(state.dir);
   expect(result.lines.at(-1)).toBe("BOOT incomplete read-only; nothing restarted, written or stopped");
   expect(result.exitCode).toBe(1);
 });
@@ -349,7 +461,8 @@ test("an unreadable journal of any kind is that lane's error; the other lanes ar
   deps.reports.report("b-healthy", "blocker", "needs the owner", T0);
   // When boot runs; then both lanes are listed and the run finishes incomplete.
   const result = await bootCheck(deps);
-  expect(result.lines.some((l) => l.startsWith("JOURNAL-ERROR a-broken:"))).toBe(true);
+  expect(result.lines).toContain("JOURNAL-ERROR a-broken kind=EISDIR");
+  expect(result.lines.join("\n")).not.toContain(state.dir);
   expect(result.lines).toContain("REPORT b-healthy kind=blocker at=2026-01-01T12:00:00.000Z state=blocked registryStatus=working");
   expect(result.lines.at(-1)).toBe("BOOT incomplete read-only; nothing restarted, written or stopped");
   expect(result.exitCode).toBe(1);
