@@ -10,6 +10,8 @@ export type Inbound = {
   readonly replyToId?: string;
   readonly replyToAuthor?: string;
   readonly replyToText?: string;
+  /** User ids this message @-mentions, so a consumer can tell whose message it is without re-parsing text. */
+  readonly mentions?: readonly string[];
 };
 
 export type MediaRef = {
@@ -25,11 +27,14 @@ export type GatewaySocket = {
   send(data: string): void;
   close(): void;
   onMessage(cb: (data: string) => void): void;
+  onClose?(cb: (code: number, reason: string) => void): void;
 };
 
 export type Clock = {
   setInterval: (cb: () => void, ms: number) => unknown;
   clearInterval: (h: unknown) => void;
+  setTimeout?: (cb: () => void, ms: number) => unknown;
+  clearTimeout?: (h: unknown) => void;
 };
 
 /** The newest message id seen in each channel, so a restart can ask Discord what it missed. */
@@ -70,6 +75,10 @@ const DEFAULT_HEARTBEAT_MS = 41_250;
 /** A freshly opened socket that sends no HELLO within this window is dead; nothing else would ever
  * notice, because the heartbeat and its ack watch only exist once HELLO has arrived. */
 export const HELLO_WAIT_MS = 15_000;
+const RECONNECT_MIN_MS = 1_000;
+const RECONNECT_MAX_MS = 5_000;
+const RECONNECT_BACKOFF_CAP_MS = 60_000;
+const FATAL_CLOSE_CODES: ReadonlySet<number> = new Set([4004, 4010, 4011, 4012, 4013, 4014]);
 const MAX_SEEN = 500;
 
 /** Discord caps a messages page at 100; a long outage needs several of them. */
@@ -94,6 +103,7 @@ type MessageCreate = {
   readonly embeds?: readonly unknown[];
   readonly message_reference?: { readonly message_id?: string };
   readonly referenced_message?: MessageCreate | null;
+  readonly mentions?: readonly { readonly id?: string }[];
 };
 
 const MEDIA_LIMIT = 6;
@@ -176,6 +186,9 @@ export const toInbound = (data: unknown, selfId: string, guildHint?: string | nu
           replyToText: (replied?.content ?? "").trim().slice(0, REPLY_PREVIEW) || undefined,
         }
       : {}),
+    ...(Array.isArray(m.mentions) && m.mentions.length > 0
+      ? { mentions: m.mentions.map((u) => u?.id ?? "").filter((id) => id.length > 0) }
+      : {}),
   };
 };
 
@@ -186,6 +199,7 @@ const REPLY_PREVIEW = 300;
  * leave the monitor with no way to tell a short message from a long one. */
 export const formatInbound = (i: Inbound): string =>
   `INBOUND discord ${i.source} ${i.channel} ${i.guild} ${i.messageId} ${i.author} ${JSON.stringify(i.text)}` +
+  (i.mentions && i.mentions.length > 0 ? ` mentions=${i.mentions.join(",")}` : "") +
   (i.media && i.media.length > 0 ? ` media=${i.media.join(",")}` : "") +
   (i.replyToId
     ? ` reply_to=${i.replyToId}${i.replyToAuthor ? ` reply_author=${JSON.stringify(i.replyToAuthor)}` : ""}${
@@ -210,6 +224,9 @@ export class DiscordInbound {
   private deliveries: Promise<void> = Promise.resolve();
   private cursorMap: Record<string, string> = {};
   private cursorWrite: Promise<void> = Promise.resolve();
+  private readonly caughtUp = new Set<string>();
+  private reconnects = 0;
+  private pendingReconnect: unknown;
 
   constructor(
     private readonly open: () => GatewaySocket,
@@ -226,6 +243,7 @@ export class DiscordInbound {
 
   start(): void {
     this.stopped = false;
+    this.caughtUp.clear();
     this.connect();
     this.backfill();
   }
@@ -245,6 +263,7 @@ export class DiscordInbound {
   stop(): void {
     this.stopped = true;
     this.clearHelloWait();
+    this.clearPendingReconnect();
     if (this.beat !== undefined) this.clock.clearInterval(this.beat);
     this.beat = undefined;
     this.socket?.close();
@@ -258,6 +277,20 @@ export class DiscordInbound {
     socket.onMessage((raw) => {
       if (this.stopped || this.socket !== socket) return;
       this.handle(raw);
+    });
+    socket.onClose?.((code, reason) => {
+      if (this.stopped || this.socket !== socket) return;
+      if (FATAL_CLOSE_CODES.has(code)) {
+        this.onEvent(`gateway closed with ${code} (${reason || "no reason"}); not reconnecting`);
+        this.stopped = true;
+        this.clearHelloWait();
+        if (this.beat !== undefined) this.clock.clearInterval(this.beat);
+        this.beat = undefined;
+        this.socket = null;
+        return;
+      }
+      this.onEvent(`gateway closed with ${code} (${reason || "no reason"}); reconnecting`);
+      this.reconnect();
     });
     this.armHelloWait(socket);
   }
@@ -324,6 +357,8 @@ export class DiscordInbound {
       const d = asRecord(payload.d);
       this.sessionId = typeof d?.session_id === "string" ? d.session_id : null;
       this.onEvent("gateway ready");
+      this.reconnects = 0;
+      this.backfill();
       return;
     }
     if (payload.t !== EVENT_MESSAGE_CREATE) return;
@@ -345,7 +380,7 @@ export class DiscordInbound {
     }
     return this.deliver(inbound, mediaRefs(data)).then(
       () => {
-        this.noteCursor(inbound.channel, inbound.messageId);
+        if (this.caughtUp.has(inbound.channel)) this.noteCursor(inbound.channel, inbound.messageId);
         return true;
       },
       (e) => {
@@ -387,6 +422,7 @@ export class DiscordInbound {
     let fetched = 0;
     let delivered = 0;
     let truncated = false;
+    let clean = true;
     let guild: string | null = null;
     try {
       guild = this.guildOf ? await this.guildOf(channel) : null;
@@ -399,6 +435,7 @@ export class DiscordInbound {
         rows = await history(channel, cursor, BACKFILL_PAGE);
       } catch (e) {
         this.onEvent(`backfill stopped for ${channel}: ${(e as Error).message}`);
+        clean = false;
         break;
       }
       if (!Array.isArray(rows) || rows.length === 0) break;
@@ -433,6 +470,7 @@ export class DiscordInbound {
         `backfill fetched ${fetched} message(s) in ${channel}, delivered ${delivered}${truncated ? " (stopped at the page limit)" : ""}`,
       );
     }
+    if (clean && !truncated) this.caughtUp.add(channel);
   }
 
   /** Persisted per channel: a single global id would skip a quiet channel whose messages are older
@@ -518,7 +556,33 @@ export class DiscordInbound {
     this.beat = undefined;
     this.socket?.close();
     this.socket = null;
-    this.connect();
+    this.scheduleReconnect();
+  }
+
+  private reconnectDelay(): number {
+    const span = RECONNECT_MAX_MS - RECONNECT_MIN_MS;
+    const base = RECONNECT_MIN_MS + Math.floor(Math.random() * (span + 1));
+    const exponent = Math.min(this.reconnects, 6);
+    return Math.min(base * 2 ** exponent, RECONNECT_BACKOFF_CAP_MS);
+  }
+
+  private scheduleReconnect(): void {
+    if (this.stopped) return;
+    this.clearPendingReconnect();
+    const delay = this.reconnectDelay();
+    this.reconnects++;
+    const fire = () => {
+      this.pendingReconnect = undefined;
+      this.connect();
+    };
+    if (this.clock.setTimeout) this.pendingReconnect = this.clock.setTimeout(fire, delay);
+    else fire();
+  }
+
+  private clearPendingReconnect(): void {
+    if (this.pendingReconnect === undefined) return;
+    this.clock.clearTimeout?.(this.pendingReconnect);
+    this.pendingReconnect = undefined;
   }
 
   private send(payload: Record<string, unknown>): void {
