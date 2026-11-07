@@ -262,6 +262,17 @@ const manualClock = () => {
       const i = live.indexOf(h as Timer);
       if (i >= 0) live.splice(i, 1);
     },
+    setTimeout: (cb, ms) => {
+      const t = { cb, ms };
+      all.push(t);
+      live.push(t);
+      return t;
+    },
+    clearTimeout: (h) => {
+      cleared.push(h);
+      const i = live.indexOf(h as Timer);
+      if (i >= 0) live.splice(i, 1);
+    },
   };
   return { clock, live, all, cleared };
 };
@@ -269,6 +280,7 @@ const manualClock = () => {
 const fakeSocket = () => {
   const sent: Record<string, unknown>[] = [];
   let handler: (data: string) => void = () => {};
+  let closer: (code: number, reason: string) => void = () => {};
   const s = {
     sent,
     closes: 0,
@@ -277,9 +289,13 @@ const fakeSocket = () => {
     onMessage: (cb: (data: string) => void) => {
       handler = cb;
     },
+    onClose: (cb: (code: number, reason: string) => void) => {
+      closer = cb;
+    },
     deliver: (payload: unknown) => handler(JSON.stringify(payload)),
     /** HELLO is always the first frame Discord sends, on every connection. */
     hello: (interval = 1000) => s.deliver({ op: 10, d: { heartbeat_interval: interval } }),
+    closeWith: (code: number, reason = "") => closer(code, reason),
   };
   return s;
 };
@@ -309,6 +325,10 @@ describe("DiscordInbound HELLO wait", () => {
     wait[0]!.cb();
 
     expect(g.sockets[0]!.closes).toBe(1);
+    expect(g.sockets).toHaveLength(1);
+    const delay = clock.live.filter((t) => t.ms >= 1000 && t.ms <= 5000);
+    expect(delay).toHaveLength(1);
+    delay[0]!.cb();
     expect(g.sockets).toHaveLength(2);
     expect(g.events).toEqual([`gateway sent no HELLO within ${HELLO_WAIT_MS / 1000}s; reconnecting`]);
     // The replacement socket is watched by its own HELLO timer, and the fired one is gone.
@@ -352,3 +372,188 @@ describe("DiscordInbound HELLO wait", () => {
   });
 });
 
+
+describe("DiscordInbound cursor safety (#87 review)", () => {
+  const ready = (s: { deliver: (p: unknown) => void }) => s.deliver({ op: 0, t: "READY", d: { session_id: "s1" } });
+
+  test("a live message does not move a channel's cursor while that channel's catch-up is still running", async () => {
+    const cursorState = cursorStore({ ch1: "100" });
+    let releaseHistory = () => {};
+    let historyStarted = () => {};
+    const started = new Promise<void>((resolve) => (historyStarted = resolve));
+    const clock = manualClock();
+    const g = gateway(clock.clock);
+    const inbound = new DiscordInbound(
+      () => {
+        const s = fakeSocket();
+        g.sockets.push(s);
+        return s;
+      },
+      "token",
+      clock.clock,
+      "self",
+      () => {},
+      (line) => g.events.push(line),
+      null,
+      cursorState.store,
+      async () => {
+        historyStarted();
+        await new Promise<void>((resolve) => (releaseHistory = resolve));
+        return newestFirst(row("101", "ch1"));
+      },
+      async () => "guild-1",
+    );
+
+    inbound.start();
+    await started;
+
+    g.sockets[0]!.deliver({ op: 0, t: "MESSAGE_CREATE", d: row("150", "ch1") });
+    expect(cursorState.current()).toEqual({ ch1: "100" });
+
+    releaseHistory();
+    await inbound.idle();
+    expect(cursorState.current()).toEqual({ ch1: "101" });
+
+    g.sockets[0]!.deliver({ op: 0, t: "MESSAGE_CREATE", d: row("151", "ch1") });
+    await inbound.idle();
+    expect(cursorState.current()).toEqual({ ch1: "151" });
+  });
+  test("a catch-up that stopped early leaves the cursor behind, and the next live message cannot overtake the gap", async () => {
+    const cursorState = cursorStore({ ch1: "100" });
+    const clock = manualClock();
+    const g = gateway(clock.clock);
+    let fail = true;
+    const inbound = new DiscordInbound(
+      () => {
+        const s = fakeSocket();
+        g.sockets.push(s);
+        return s;
+      },
+      "token",
+      clock.clock,
+      "self",
+      () => {},
+      (line) => g.events.push(line),
+      null,
+      cursorState.store,
+      async () => {
+        if (fail) throw new Error("502 bad gateway");
+        return [];
+      },
+      async () => "guild-1",
+    );
+
+    inbound.start();
+    await inbound.idle();
+    expect(g.events).toContain("backfill stopped for ch1: 502 bad gateway");
+
+    g.sockets[0]!.deliver({ op: 0, t: "MESSAGE_CREATE", d: row("150", "ch1") });
+    await inbound.idle();
+    expect(cursorState.current()).toEqual({ ch1: "100" });
+
+    fail = false;
+    ready(g.sockets[0]!);
+    await inbound.idle();
+
+    g.sockets[0]!.deliver({ op: 0, t: "MESSAGE_CREATE", d: row("151", "ch1") });
+    await inbound.idle();
+    expect(cursorState.current()).toEqual({ ch1: "151" });
+  });
+
+  test("a fresh identify after op 9 runs catch-up again, so the outage window is replayed", async () => {
+    const cursorState = cursorStore({ ch1: "100" });
+    const clock = manualClock();
+    const g = gateway(clock.clock);
+    const calls: { channel: string; after: string }[] = [];
+    const inbound = new DiscordInbound(
+      () => {
+        const s = fakeSocket();
+        g.sockets.push(s);
+        return s;
+      },
+      "token",
+      clock.clock,
+      "self",
+      () => {},
+      (line) => g.events.push(line),
+      null,
+      cursorState.store,
+      async (channel, after) => {
+        calls.push({ channel, after });
+        return [];
+      },
+      async () => "guild-1",
+    );
+
+    inbound.start();
+    await inbound.idle();
+    expect(calls).toHaveLength(1);
+
+    g.sockets[0]!.deliver({ op: 9, d: false });
+    const delay = clock.live.find((t) => t.ms >= 1000 && t.ms <= 5000);
+    expect(delay).toBeDefined();
+    delay!.cb();
+
+    ready(g.sockets.at(-1)!);
+    await inbound.idle();
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toEqual({ channel: "ch1", after: "100" });
+  });
+});
+
+describe("DiscordInbound reconnect safety (#87 review)", () => {
+  test("op 9 waits a random 1-5 s before identifying again instead of reconnecting at once", () => {
+    const clock = manualClock();
+    const g = gateway(clock.clock);
+    g.inbound.start();
+    expect(g.sockets).toHaveLength(1);
+
+    g.sockets[0]!.deliver({ op: 9, d: false });
+
+    expect(g.sockets).toHaveLength(1);
+    const delays = clock.live.filter((t) => t.ms >= 1000 && t.ms <= 5000);
+    expect(delays).toHaveLength(1);
+    delays[0]!.cb();
+    expect(g.sockets).toHaveLength(2);
+  });
+
+  test("repeated op 9 frames back off, so a storm cannot open a socket per frame", () => {
+    const clock = manualClock();
+    const g = gateway(clock.clock);
+    g.inbound.start();
+
+    g.sockets[0]!.deliver({ op: 9, d: false });
+    const first = clock.live.filter((t) => t.ms >= 1000 && t.ms <= 5000);
+    first[0]!.cb();
+    g.sockets[1]!.deliver({ op: 9, d: false });
+    const second = clock.live.filter((t) => t.ms >= 1000 && t.ms <= 60_000 && !first.includes(t));
+    expect(second).toHaveLength(1);
+    expect(second[0]!.ms).toBeGreaterThan(first[0]!.ms);
+    expect(g.sockets).toHaveLength(2);
+  });
+
+  test("a fatal close code stops the loop instead of identifying forever", () => {
+    const clock = manualClock();
+    const g = gateway(clock.clock);
+    g.inbound.start();
+
+    g.sockets[0]!.closeWith(4004, "Authentication failed");
+
+    expect(g.sockets).toHaveLength(1);
+    expect(clock.live.filter((t) => t.ms >= 1000 && t.ms <= 60_000)).toHaveLength(0);
+    expect(g.events.some((e) => e.includes("4004"))).toBe(true);
+  });
+
+  test("a non-fatal close code reconnects after a delay", () => {
+    const clock = manualClock();
+    const g = gateway(clock.clock);
+    g.inbound.start();
+
+    g.sockets[0]!.closeWith(1006, "");
+
+    const delay = clock.live.filter((t) => t.ms >= 1000 && t.ms <= 5000);
+    expect(delay).toHaveLength(1);
+    delay[0]!.cb();
+    expect(g.sockets).toHaveLength(2);
+  });
+});
