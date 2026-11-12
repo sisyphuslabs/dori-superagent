@@ -13,7 +13,9 @@ const T0 = Date.parse("2026-01-01T12:00:00.000Z");
 
 // omo's warning for an extension it cannot load, with the full path a real one carries, and a pane's row wrapping.
 const longWarning = `Warning: Failed to load extension "/Users/someone/.omo/agent/extensions/memory-sync/index.js": Failed to load extension: Cannot find module '/Users/someone/.omo/agent/extensions/memory-sync/node_modules/gone/dist/index.mjs'`;
-const wrap = (text: string, width: number): string => (text.match(new RegExp(`.{1,${width}}`, "g")) ?? []).join("\n");
+// Rows as hc prints them: cut every `width` characters, trailing blanks dropped (so a wrap on a space loses it).
+const wrap = (text: string, width: number): string =>
+  (text.match(new RegExp(`.{1,${width}}`, "g")) ?? []).map((row) => row.trimEnd()).join("\n");
 
 // A status that stands for a runtime that cannot list its sessions.
 const LOOKUP_ERROR = "(lookup error)";
@@ -151,9 +153,11 @@ test("on hc, a program that has not reported a status yet is waited for, and one
   );
   expect(waits).toBe(1);
   // The extension warning wraps in a pane narrower than the line; read unwrapped, it is still only the warning (#202).
-  for (const cols of [80, 100]) {
+  // 95, 105 and 110 wrap on a space, which hc cuts, so a wrapped row is one cell short of the width.
+  for (const cols of [80, 95, 100, 105, 110]) {
     const wrapped = wrap(longWarning, cols);
     expect(wrapped.split("\n").slice(1).join("\n")).toContain("Cannot find module");
+    if (cols !== 80 && cols !== 100) expect(wrapped.split("\n").some((row) => row.length === cols - 1)).toBe(true);
     const ready = { foreground: OMO, status: { state: "idle", app: "omo" }, cols };
     expect(await launch(`hc-wrap-${cols}`, { ...ready, screen: `${wrapped}\n❯ \n Pursuing goal (1m)` })).toBe(
       `STARTUP_OK hc-wrap-${cols} t1`,
@@ -164,4 +168,12 @@ test("on hc, a program that has not reported a status yet is waited for, and one
       `STARTUP_ERROR hc-wrap-err-${cols} t1: Cannot find module`,
     );
   }
+  // A warning whose last row fills the pane is joined to the next printed line; the real failure on it still counts.
+  const exact = `Warning: Failed to load extension "x.js": Cannot find module '${"a".repeat(17)}'`;
+  expect(exact.length).toBe(80);
+  const joined = `${exact}\nError: Cannot find module '/repo/dist/cli.js'\n$ `;
+  const atWidth = { foreground: OMO, status: { state: "idle", app: "omo" }, cols: 80 };
+  expect(await launch("hc-exact", { ...atWidth, screen: joined })).toBe(
+    "STARTUP_ERROR hc-exact t1: Cannot find module",
+  );
 });

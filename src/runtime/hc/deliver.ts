@@ -94,14 +94,19 @@ export async function read(exec: Exec, id: string, lines: number, unwrapped = fa
   return typeof cols === "number" && cols > 0 ? joinWrapped(text, cols) : text;
 }
 
-/** hc prints screen rows with trailing blanks cut, so a row exactly `cols` wide is one the terminal wrapped. */
-const joinWrapped = (text: string, cols: number): string => {
+/**
+ * hc prints screen rows with trailing blanks cut and says nothing about wrapping, so a row that fills the terminal is
+ * taken as wrapped: `cols` cells wide, or `cols - 1` when the wrap fell on a space that was cut. Width is counted in
+ * terminal cells (a CJK character or an emoji is two). A line the agent printed exactly that wide is joined to the next
+ * one too: callers must not treat a joined line as one message (launch strips only the warning text, never a line).
+ */
+export const joinWrapped = (text: string, cols: number): string => {
   const lines: string[] = [];
   let open = false;
   for (const row of text.split("\n")) {
     if (open) lines[lines.length - 1] += row;
     else lines.push(row);
-    open = row.length >= cols;
+    open = cols > 1 && Bun.stringWidth(row) >= cols - 1;
   }
   return lines.join("\n");
 };
