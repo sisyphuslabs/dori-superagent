@@ -86,7 +86,22 @@ export async function keys(exec: Exec, id: string, names: readonly Key[]): Promi
   await hcCall(exec, ["keys", id, ...names.map((k) => KEY_NAMES[k])]);
 }
 
-export async function read(exec: Exec, id: string, lines: number): Promise<string> {
+export async function read(exec: Exec, id: string, lines: number, unwrapped = false): Promise<string> {
   const result = await hcCall(exec, ["read", id, "--lines", String(lines)]);
-  return typeof result["text"] === "string" ? result["text"] : "";
+  const text = typeof result["text"] === "string" ? result["text"] : "";
+  if (!unwrapped) return text;
+  const cols = (await hcCall(exec, ["get", id]))["cols"];
+  return typeof cols === "number" && cols > 0 ? joinWrapped(text, cols) : text;
 }
+
+/** hc prints screen rows with trailing blanks cut, so a row exactly `cols` wide is one the terminal wrapped. */
+const joinWrapped = (text: string, cols: number): string => {
+  const lines: string[] = [];
+  let open = false;
+  for (const row of text.split("\n")) {
+    if (open) lines[lines.length - 1] += row;
+    else lines.push(row);
+    open = row.length >= cols;
+  }
+  return lines.join("\n");
+};

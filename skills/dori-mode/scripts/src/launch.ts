@@ -6,7 +6,6 @@ import type { Runtimes } from "../../../../src/runtime/registry.ts";
 import { parseRef, type SessionRef } from "../../../../src/runtime/types.ts";
 import { LANE_KEY, type Lane, RESERVED_LANE_KEY, sessionFields, upgradeLane } from "./registry.ts";
 import { iso, runtimesOf } from "./run.ts";
-import { readScreen } from "./sessions.ts";
 import { Reports } from "./reports.ts";
 import { doneSyntaxErrors } from "./signals.ts";
 import type { BudgetLimits } from "./supervision-observe.ts";
@@ -31,6 +30,10 @@ const STARTUP_FAILURE =
 // omo warns about a user extension it cannot load (`Warning: Failed to load extension "...": ... Cannot find module ...`)
 // and starts anyway (#202). Only a line that is that warning is skipped; a failure on any other line still counts.
 const EXTENSION_WARNING = /^\s*Warning: Failed to load extension\b/;
+// A real warning names the extension's full path, so a narrow pane wraps it and `Cannot find module` lands on a later
+// row. The startup checks therefore read the screen unwrapped: one line per line the agent printed.
+const startupScreen = (rts: Runtimes, ref: SessionRef): Promise<string> =>
+  rts.for(ref).read(ref, 40, { unwrapped: true });
 const startupFailure = (screen: string): RegExpExecArray | null =>
   STARTUP_FAILURE.exec(
     screen
@@ -43,14 +46,17 @@ const FIRST_CHECK_MS = 20_000;
 const RECHECK_MS = 10_000;
 /**
  * The runtime's own status word for the lane's session. Unlike agentStatus it keeps `shell` (no agent in the session)
- * apart from no status yet: hc lists a session whose program has not reported with no status, herdr an agent that has
- * not reported as `unknown`. A session missing from the list is `gone`.
+ * apart from no status yet: herdr lists an agent that has not reported as `unknown` and a pane with no agent as `shell`.
+ * hc lists both with no status, so a session listed with none is probed, which names a shell in front. A session missing
+ * from the list is `gone`.
  */
 const launchStatus = async (rts: Runtimes, ref: SessionRef): Promise<{ status?: string; error?: string }> => {
   try {
     const found = (await rts.for(ref).list()).find((s) => s.ref.id === ref.id);
     if (!found) return { status: "gone" };
-    return found.status === undefined ? {} : { status: found.status };
+    if (found.status !== undefined) return { status: found.status };
+    const probed = (await rts.for(ref).probe(ref)).status;
+    return probed === "shell" || probed === "gone" ? { status: probed } : {};
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -183,7 +189,7 @@ const startLane = async (
   }
   const started = deps.clock.now();
   await deps.clock.sleep(FIRST_CHECK_MS);
-  const screen = await readScreen(rts, ref, 40);
+  const screen = await startupScreen(rts, ref);
   const bad = startupFailure(screen);
   if (bad) return { lane, startup: `STARTUP_ERROR ${input.key} ${pane}: ${bad[0]}` };
   const { status, error } = await launchStatus(rts, ref);
@@ -207,7 +213,7 @@ const startLane = async (
         };
       }
       await deps.clock.sleep(RECHECK_MS);
-      shown = await readScreen(rts, ref, 40);
+      shown = await startupScreen(rts, ref);
       // The goal is only good news while the agent is still running: re-check the status on every re-read.
       const again = await launchStatus(rts, ref);
       current = again.status;

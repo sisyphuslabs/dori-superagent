@@ -35,6 +35,22 @@ describe("typed text, shells, keys", () => {
     expect(await rt.read(T1, 40)).toBe("line a\nline b");
     expect(fake.calls).toEqual([["read", "t1", "--lines", "40"]]);
   });
+
+  test("an unwrapped read joins the rows the terminal wrapped at its width, and only those", async () => {
+    // Rows of exactly `cols` characters were cut by the terminal; a shorter row ends its line.
+    const screen = ["Warning: Failed to", " load extension x", "next line", "0123456789", "ab", "$ "].join("\n");
+    const { fake, rt } = rig({ t1: terminal({ screen, cols: 18 }) });
+    expect(await rt.read(T1, 40, { unwrapped: true })).toBe(
+      ["Warning: Failed to load extension x", "next line", "0123456789", "ab", "$ "].join("\n"),
+    );
+    expect(fake.calls).toEqual([
+      ["read", "t1", "--lines", "40"],
+      ["get", "t1"],
+    ]);
+    // Without a width the text comes back as read.
+    const { rt: noCols } = rig({ t1: terminal({ screen }) });
+    expect(await noCols.read(T1, 40, { unwrapped: true })).toBe(screen);
+  });
 });
 
 describe("close, list, self", () => {
