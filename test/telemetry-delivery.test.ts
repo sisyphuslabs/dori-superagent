@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Telemetry } from "../src/telemetry.ts";
 import { rejectedRecords } from "../src/telemetry-otlp.ts";
+import { tempDir } from "./temp.ts";
 
 type Sent = { url: string; body: string; headers: Record<string, string> };
 
@@ -13,7 +13,7 @@ function rig(
   registerStatus: () => number = () => 200,
   logsText: () => string = () => "",
 ) {
-  const home = mkdtempSync(join(tmpdir(), "dori-tel-"));
+  const home = tempDir("dori-tel-");
   const sent: Sent[] = [];
   const notices: string[] = [];
   let clock = Date.parse("2026-11-02T10:00:00Z");
@@ -102,7 +102,7 @@ describe("telemetry", () => {
   });
 
   test("calls return at once and flush gives up at its deadline when the collector hangs", async () => {
-    const home = mkdtempSync(join(tmpdir(), "dori-tel-"));
+    const home = tempDir("dori-tel-");
     const hung = new Telemetry(
       home,
       {},
@@ -118,7 +118,7 @@ describe("telemetry", () => {
   });
 
   test("first runs racing in separate processes on one home end up with a single install id", async () => {
-    const home = mkdtempSync(join(tmpdir(), "dori-tel-"));
+    const home = tempDir("dori-tel-");
     const script = `const { Telemetry } = await import(${JSON.stringify(join(import.meta.dir, "../src/telemetry.ts"))});
       const hashes = [];
       const t = new Telemetry(process.argv[1], {}, async (url, body) => { if (url.endsWith("/v1/logs")) hashes.push(JSON.parse(body).resourceLogs[0].resource.attributes.find((a) => a.key === "dori.install.hash").value.stringValue); return { status: 200, text: JSON.stringify({ key: "k" }) }; }, Date.now, () => {});

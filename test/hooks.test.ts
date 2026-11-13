@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { main } from "../src/cli.ts";
 import { up } from "../src/cli-up.ts";
@@ -11,6 +10,7 @@ import { ConfigError, hooksSettled, loadHooks, runHook, substitute } from "../sr
 import { ready, report, startLane } from "../src/lanes.ts";
 import type { World } from "./fake.ts";
 import { setup } from "./harness-setup.ts";
+import { tempDir } from "./temp.ts";
 
 const config = (d: Deps, value: unknown) => writeFileSync(join(d.store.root, "config.json"), JSON.stringify(value));
 const hookCalls = (w: World, cmd: string) => w.calls.filter((c) => c.cmd === cmd).map((c) => [c.cmd, ...c.argv]);
@@ -156,7 +156,7 @@ describe("reviewCommand and DORI_PROMPTS_DIR", () => {
 
   test("DORI_PROMPTS_DIR overrides prompt() and the prompts dori up renders", async () => {
     const { w, d } = setup();
-    const dir = mkdtempSync(join(tmpdir(), "dori-prompts-"));
+    const dir = tempDir("dori-prompts-");
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "nudge.md"), "custom nudge for {{key}}");
     for (const name of ["lead.md", "duty.md"]) writeFileSync(join(dir, name), `custom ${name} via {{dori}}`);
