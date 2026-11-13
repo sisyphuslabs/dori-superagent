@@ -7,6 +7,7 @@ import {
   hc,
   hcBin,
   newHome,
+  removeRoot,
   screen,
   startCore,
   statusOf,
@@ -33,7 +34,10 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  if (!hcBin) return;
+  if (!hcBin) {
+    removeRoot();
+    return;
+  }
   const stopped = await stopCore();
   expect(stopped.pid).toBeNumber();
   expect(stopped.alive).toBe(false);

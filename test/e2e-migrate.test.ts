@@ -73,7 +73,10 @@ async function until<T>(what: string, probe: () => Promise<T | undefined>, ms = 
 }
 
 beforeAll(async () => {
-  if (!both) return;
+  if (!both) {
+    rmSync(root, { recursive: true, force: true });
+    return;
+  }
   for (const dir of [home, state, run, join(config, "herdr-core")]) mkdirSync(dir, { recursive: true });
   chmodSync(run, 0o700);
   writeFileSync(join(config, "herdr-core", "config.toml"), "notes = false\n");
