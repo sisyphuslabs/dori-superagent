@@ -162,7 +162,7 @@ The lead is the only session that talks to you (`prompts/lead.md`). The lane rul
 
 `dori send` asks herdr for the pane's agent state first. `idle` or `done` get the message now; anything else has it queued in `~/.dori/inbox/`, and the duty loop delivers the queue when the pane goes idle, as one batch. A pane with a shell in front is never typed into, because typed text would run as a command.
 
-When a delivery failed after the text may already have reached the pane, only Enter is pressed later, and only into the agent it was typed into; if herdr then sees a different agent, the entry is held, the lead is told once with `[DELIVERY-AMBIGUOUS <pane>]`, and `dori inbox ack` or `dori inbox resend` settles it by hand.
+When a delivery failed after the text may already have reached the pane, only Enter is pressed later, and only into the agent it was typed into; if herdr then sees a different agent, the entry is held, the lead is told once with `[DELIVERY-AMBIGUOUS <pane>]`, and `dori inbox ack` or `dori inbox resend` settles it by hand. A message that never reached the pane and no longer should — a stale instruction left in a pane that read `working` for hours — is thrown away with `dori inbox drop <pane|role|key> <index>`, or `--all` for every queued entry of that inbox.
 
 ### Nudges at 10, 20 and 40 minutes
 

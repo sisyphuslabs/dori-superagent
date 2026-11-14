@@ -12,6 +12,8 @@ export const USAGE = `dori - a proactive multi-session harness on herdr or hc + 
   dori inbox list <pane|role|key>             queued entries: index, state (queued|typed|held), sender, time, first 60 chars
   dori inbox ack <pane|role|key> <index>      drop a held entry: it did reach the pane
   dori inbox resend <pane|role|key> <index>   release a held entry: the next flush delivers it
+  dori inbox drop <pane|role|key> <index>     throw away a queued entry: it never reached the pane and never will
+                  [--all]                     throw away every queued entry of the inbox; held and typed entries stay
   dori duty [--once] [--interval SECONDS]     flush inboxes, nudge idle lanes, escalate, detect lost lanes
   dori duty stop [--text WHY] | resume | status   kill switch
   dori loop [--once] [--interval S] [--max-lanes N] [--max-starts N] [--max-load L] [--force]
