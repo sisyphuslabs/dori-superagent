@@ -8,7 +8,7 @@ import { need, one, parse, textOf, USAGE } from "./cli-args.ts";
 import { defaultDeps, ROLES, type Deps } from "./harness.ts";
 import { ConfigError, hooksSettled } from "./hooks.ts";
 import { send, type SendResult } from "./inbox.ts";
-import { inboxList, releaseHeld, sendToShell } from "./inbox-held.ts";
+import { dropQueued, inboxList, releaseHeld, sendToShell } from "./inbox-held.ts";
 import { Refusal } from "./refusal.ts";
 import { runMigrate } from "./migrate.ts";
 import { refText } from "./refs.ts";
@@ -113,6 +113,14 @@ export async function main(argv: readonly string[], d: Deps = defaultDeps()): Pr
         console.log(
           x === "ack" ? `ACKED ${paneId} ${index}` : `RELEASED ${paneId} ${index}: the next flush delivers it`,
         );
+        return 0;
+      }
+      if (x === "drop") {
+        const all = one(a, "all") === "true";
+        if (all && a.pos[3] !== undefined) throw new Refusal("give either an entry index or --all, not both");
+        const index = all ? Number.NaN : Number(need(a.pos[3], "entry index (see dori inbox list)"));
+        const { paneId, dropped } = dropQueued(d, target, index, all);
+        console.log(all ? `DROPPED ${paneId} ${dropped} queued entries` : `DROPPED ${paneId} ${index}`);
         return 0;
       }
       throw new Refusal(`unknown inbox command ${x}\n\n${USAGE}`);
