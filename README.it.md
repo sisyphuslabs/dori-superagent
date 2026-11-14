@@ -166,7 +166,9 @@ Quando una consegna fallisce dopo che il testo potrebbe essere già arrivato nel
 
 ### Solleciti a 10, 20 e 40 minuti
 
-Una lane che non fa rapporto da 10 minuti, e il cui pane non sta lavorando, riceve `prompts/nudge.md` nel suo pane, di nuovo a 20, e a 40 il duty loop invia al lead `[ESCALATE <key>]`. Una lane che ha riportato `--status waiting`, o il cui pane è `blocked`, viene lasciata in pace.
+Una lane che non fa rapporto da 10 minuti, e il cui pane non sta lavorando, riceve `prompts/nudge.md` nel suo pane, di nuovo a 20, e a 40 il duty loop invia al lead `[ESCALATE <key>]`. Una lane che ha riportato `--status waiting` viene lasciata in pace.
+
+Un pane fermo in `blocked` o `error` non accetta input, quindi nulla lo farebbe ripartire: dopo 10 minuti il duty loop invia al lead `[STUCK <key>]` una volta per quella sosta e non scrive nulla nel pane. Quando il pane torna a dire altro, una sosta successiva viene riportata di nuovo.
 
 ### Il merge richiede una receipt CLEAR sull'head esatto e check verdi
 
@@ -275,7 +277,7 @@ dori invia conteggi d'uso anonimi nello stesso modo di omo: log OTLP/HTTP JSON a
 | `dori.lane_ready` | `dori ready` | `evidence_count`, `lane_minutes` |
 | `dori.review_completed` | `dori review` | `verdict`: `CLEAR` o `BLOCK` |
 | `dori.merge_decided` | `dori merge` senza `--dry-run` | `outcome` |
-| `dori.duty_summary` | al massimo una volta all'ora, dal duty loop | `ticks`, `flushed`, `nudges`, `escalations`, `lost` |
+| `dori.duty_summary` | al massimo una volta all'ora, dal duty loop | `ticks`, `flushed`, `nudges`, `escalations`, `lost`, `stuck` |
 
 Ogni record riporta anche nome e versione del servizio, l'hash di installazione, un flag CI, tipo e versione del sistema operativo e l'architettura della CPU. Mai inviati: percorsi, nomi di repository, numeri di PR, chiavi delle lane, brief, messaggi o qualsiasi altro testo. Un comando aspetta l'invio al massimo 2 secondi, e un errore della telemetria non fa mai fallire un comando.
 
