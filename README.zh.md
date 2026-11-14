@@ -166,7 +166,9 @@ lead 是唯一和你说话的会话（`prompts/lead.md`）。lane 规则把每�
 
 ### 10、20 和 40 分钟的提醒
 
-一个 10 分钟没有汇报、pane 也不在 working 状态的 lane，会在 pane 里收到 `prompts/nudge.md`，20 分钟时再收到一次，40 分钟时 duty loop 给 lead 发送 `[ESCALATE <key>]`。汇报过 `--status waiting` 或 pane 处于 `blocked` 的 lane 不会被打扰。
+一个 10 分钟没有汇报、pane 也不在 working 状态的 lane，会在 pane 里收到 `prompts/nudge.md`，20 分钟时再收到一次，40 分钟时 duty loop 给 lead 发送 `[ESCALATE <key>]`。汇报过 `--status waiting` 的 lane 不会被打扰。
+
+停在 `blocked` 或 `error` 的 pane 收不到输入，自己永远不会再动：10 分钟后 duty loop 针对这段卡顿给 lead 发送一次 `[STUCK <key>]`，并且不往 pane 里输入任何东西。pane 回到别的状态后，下一次卡顿会再次上报。
 
 ### merge 需要精确 head 上的 CLEAR receipt 和全绿的检查
 
@@ -275,7 +277,7 @@ dori 以和 omo 相同的方式发送匿名使用计数：以 OTLP/HTTP JSON 日
 | `dori.lane_ready` | `dori ready` | `evidence_count`, `lane_minutes` |
 | `dori.review_completed` | `dori review` | `verdict`：`CLEAR` 或 `BLOCK` |
 | `dori.merge_decided` | 不带 `--dry-run` 的 `dori merge` | `outcome` |
-| `dori.duty_summary` | 最多每小时一次，来自 duty loop | `ticks`, `flushed`, `nudges`, `escalations`, `lost` |
+| `dori.duty_summary` | 最多每小时一次，来自 duty loop | `ticks`, `flushed`, `nudges`, `escalations`, `lost`, `stuck` |
 
 每条记录还带有服务名称和版本、安装哈希、一个 CI 标志、操作系统类型和版本，以及 CPU 架构。从不发送：路径、仓库名、PR 编号、lane key、brief、消息或任何其他文本。命令最多等待发送 2 秒，遥测失败从不会让命令失败。
 

@@ -141,19 +141,24 @@ describe("telemetry", () => {
 
   test("duty ticks are summed and sent at most once an hour", async () => {
     const r = rig();
-    const tick = { ticks: 1, flushed: 1, nudges: 0, escalations: 0, lost: 0 };
+    const tick = { ticks: 1, flushed: 1, nudges: 0, escalations: 0, lost: 0, stuck: 0 };
     for (let i = 0; i < 60; i++) {
       r.t.duty(tick);
       await r.t.flush(5000);
       r.advance(60_000);
     }
     expect(r.logs()).toEqual([]);
-    r.t.duty({ ...tick, nudges: 1 });
+    r.t.duty({ ...tick, nudges: 1, stuck: 2 });
     await r.t.flush(5000);
     expect(r.names()).toEqual(["dori.duty_summary"]);
     const attrs = JSON.parse(r.logs()[0]!.body).resourceLogs[0].scopeLogs[0].logRecords[0].attributes;
     const get = (k: string) => attrs.find((a: { key: string }) => a.key === k).value.intValue;
-    expect([get("dori.ticks"), get("dori.flushed"), get("dori.nudges")]).toEqual(["61", "61", "1"]);
+    expect([get("dori.ticks"), get("dori.flushed"), get("dori.nudges"), get("dori.stuck")]).toEqual([
+      "61",
+      "61",
+      "1",
+      "2",
+    ]);
     r.t.duty(tick);
     await r.t.flush(5000);
     expect(r.logs()).toHaveLength(1);

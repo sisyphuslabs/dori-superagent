@@ -12,7 +12,14 @@ import { isOn, OS_TYPE, otlpLogs, rejectedRecords } from "./telemetry-otlp.ts";
 const HOUR_MS = 3_600_000;
 
 export type MergeOutcome = "merged" | "no_receipt" | "review_block" | "no_checks" | "checks_red" | "checks_all_skipped";
-export type DutyCounts = { ticks: number; flushed: number; nudges: number; escalations: number; lost: number };
+export type DutyCounts = {
+  ticks: number;
+  flushed: number;
+  nudges: number;
+  escalations: number;
+  lost: number;
+  stuck: number;
+};
 
 export type TelemetryEvent =
   | { name: "dori.installed" }
@@ -144,8 +151,8 @@ export class Telemetry implements Usage {
     this.enqueue(async () => {
       const state = this.load();
       const now = this.now();
-      const acc = state.duty ?? { ticks: 0, flushed: 0, nudges: 0, escalations: 0, lost: 0, since: now };
-      for (const k of ["ticks", "flushed", "nudges", "escalations", "lost"] as const) acc[k] += counts[k];
+      const acc = state.duty ?? { ticks: 0, flushed: 0, nudges: 0, escalations: 0, lost: 0, stuck: 0, since: now };
+      for (const k of ["ticks", "flushed", "nudges", "escalations", "lost", "stuck"] as const) acc[k] += counts[k];
       if (now - acc.since < HOUR_MS) {
         state.duty = acc;
         this.save(state);
