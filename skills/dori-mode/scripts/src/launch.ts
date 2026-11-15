@@ -79,6 +79,31 @@ export const validateLaunch = async (deps: FlowDeps, input: LaunchInput): Promis
 
 export const adoptLane = async (deps: FlowDeps, input: LaunchInput & { readonly pane: string }): Promise<Lane> => {
   await validateLaunch(deps, input);
+  // An adopt takes over a session dori did not start, so it must prove three things first: the brief is on disk,
+  // the brief carries the Done line the done-protocol reads, and the pane is one dori owns (the same group launch
+  // puts lanes into). A foreign pane - a swarm's or a human's - would otherwise get dori messages it never asked for.
+  const brief = Bun.file(input.brief);
+  if (!(await brief.exists())) throw new LaunchError(`brief not found: ${input.brief}`);
+  const briefText = await brief.text();
+  if (!briefText.split("\n").some((line) => /^\s*-?\s*Done\s*=/.test(line)))
+    throw new LaunchError(`brief has no Done line: ${input.brief}`);
+  const ref = parseRef(input.pane);
+  const wanted = ref?.id ?? input.pane;
+  const rts = runtimesOf(deps);
+  // hc: launch labels lanes `dori.group=<laneWorkspace || "dori">` (create's own default), so the ownership filter is
+  // that exact label even when laneWorkspace is empty. herdr: lanes land in the laneWorkspace workspace, or in the
+  // lead's own workspace when it is empty, so an empty laneWorkspace lists every herdr pane.
+  const group = deps.config.laneWorkspace || undefined;
+  const filter = rts.default.kind === "hc" ? { group: group ?? "dori" } : group ? { group } : undefined;
+  const owned = await rts.default.list(filter).catch((e: unknown) => {
+    throw new LaunchError(
+      `cannot list ${filter?.group ?? "runtime"} sessions to check the pane: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  });
+  if (!owned.some((s) => s.ref.id === wanted))
+    throw new LaunchError(
+      `pane ${input.pane} is not in the dori ${filter?.group ?? "session"} group; refusing to adopt a pane dori does not own`,
+    );
   const base: Lane = {
     key: input.key,
     title: input.title,
@@ -89,7 +114,6 @@ export const adoptLane = async (deps: FlowDeps, input: LaunchInput & { readonly 
     openedAt: iso(deps.clock),
   };
   // `hc:t7` or `herdr:w1:p3` names its runtime; any other id is a herdr pane, as before runtimes existed.
-  const ref = parseRef(input.pane);
   const lane = ref ? { ...base, ...sessionFields(ref) } : upgradeLane({ ...base, pane: input.pane });
   await deps.registry.write(lane);
   return lane;

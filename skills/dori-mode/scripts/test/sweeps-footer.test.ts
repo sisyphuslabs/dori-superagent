@@ -44,19 +44,22 @@ test("the lane footer calls the skill CLI by its own path, never a bare dori tha
 
 test("adopting a lane refuses a Done line the watcher could never check", async () => {
   const deps = depsFor(world, fakeClock(T0), state.dir);
+  const brief = join(state.dir, "brief.md");
+  writeFileSync(brief, "# task\n- Done = merged. The lane closes only when every signal reads back live.\n");
+  world.panes.push({ pane_id: "w:p2", workspace_id: "w" });
   await expect(
-    adoptLane(deps, { key: "x-lane", title: "x", brief: "/b.md", done: "two clean QA passes", pane: "w:p2" }),
+    adoptLane(deps, { key: "x-lane", title: "x", brief, done: "two clean QA passes", pane: "w:p2" }),
   ).rejects.toBeInstanceOf(LaunchError);
   const ok = await adoptLane(deps, {
     key: "x-lane",
     title: "x",
-    brief: "/b.md",
+    brief,
     done: "closed acme/app#3",
     pane: "w:p2",
   });
   expect(ok.thread).toBe("none");
   await expect(
-    adoptLane(deps, { key: "x-lane", title: "x", brief: "/b.md", done: "closed acme/app#3", pane: "w:p2" }),
+    adoptLane(deps, { key: "x-lane", title: "x", brief, done: "closed acme/app#3", pane: "w:p2" }),
   ).rejects.toThrow("already registered");
 });
 

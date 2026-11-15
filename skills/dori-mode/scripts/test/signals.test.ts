@@ -9,7 +9,7 @@ import { statusOf } from "../src/registry.ts";
 import { run } from "../src/run.ts";
 import { checkDone, checkSignal, doneSyntaxErrors } from "../src/signals.ts";
 import { splitDone } from "../src/signals-parse.ts";
-import { depsFor, fakeClock, newWorld, withState } from "./fakes.ts";
+import { depsFor, fakeClock, fakeRunner, newWorld, withState } from "./fakes.ts";
 
 const state = withState();
 afterAll(() => state.done());
@@ -96,7 +96,11 @@ test("signals are split on top-level semicolons only, so a semicolon inside an a
 });
 
 test("a Done line with a malformed signal is refused at launch, with the reason", async () => {
-  const deps = depsFor(newWorld(), fakeClock(0), state.dir);
+  const world = newWorld();
+  world.panes.push({ pane_id: "w:p9", workspace_id: "w" });
+  const brief = join(state.dir, "qa-brief.md");
+  writeFileSync(brief, "# qa\n- Done = closed acme/app#3. The lane closes only when every signal reads back live.\n");
+  const deps = depsFor(world, fakeClock(0), state.dir);
   const bad = [
     "two clean QA passes",
     "command bun test",
@@ -108,12 +112,12 @@ test("a Done line with a malformed signal is refused at launch, with the reason"
   ];
   for (const done of bad) expect(doneSyntaxErrors(done)).toHaveLength(1);
   await expect(
-    adoptLane(deps, { key: "qa-lane", title: "qa", brief: "/b.md", done: "command bun test", pane: "w:p9" }),
+    adoptLane(deps, { key: "qa-lane", title: "qa", brief, done: "command bun test", pane: "w:p9" }),
   ).rejects.toBeInstanceOf(LaunchError);
   const lane = await adoptLane(deps, {
     key: "qa-lane",
     title: "qa",
-    brief: "/b.md",
+    brief,
     done: 'command ["bun","test"] stdout~"0 fail"; file ~/qa/report.json json:.passed=true; url http://localhost:3000/health',
     pane: "w:p9",
   });
@@ -122,13 +126,26 @@ test("a Done line with a malformed signal is refused at launch, with the reason"
 
 test("a QA-only lane's claim is re-checked at close time: the lane says done, but the command still fails, so it stays open", async () => {
   const world = newWorld();
+  world.panes.push({ pane_id: "w:p3", workspace_id: "w" });
   const clock = fakeClock(Date.parse("2026-01-01T00:00:00Z"));
   const flag = join(state.dir, "qa-passed");
-  const deps = { ...depsFor(world, clock, state.dir), run, signalIo: { cwd: state.dir } };
+  const setupBrief = join(state.dir, "setup-brief.md");
+  writeFileSync(
+    setupBrief,
+    '# setup\n- Done = command ["true"]. The lane closes only when every signal reads back live.\n',
+  );
+  // The signals under test must really execute (test -f), but the adopt's ownership check talks to herdr - so
+  // herdr calls go to the fake and everything else (signals, git) goes to the real runner.
+  const fakeRun = fakeRunner(world);
+  const deps = {
+    ...depsFor(world, clock, state.dir),
+    run: async (argv: readonly string[]) => (argv[0] === "herdr" ? fakeRun(argv) : run(argv)),
+    signalIo: { cwd: state.dir },
+  };
   const lane = await adoptLane(deps, {
     key: "local-setup",
     title: "setup",
-    brief: "/b.md",
+    brief: setupBrief,
     done: `command ["test","-f","${flag}"]`,
     pane: "w:p3",
     cwd: state.dir,

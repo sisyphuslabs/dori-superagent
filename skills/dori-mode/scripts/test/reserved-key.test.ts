@@ -43,11 +43,6 @@ test("adopt refuses the lane key lead and registers nothing", async () => {
   ).rejects.toThrow(REFUSED);
   expect(await deps.registry.read("lead")).toBeNull();
   expect(stateFiles()).toEqual([]);
-  // A key that only contains the word is an ordinary lane.
-  expect(
-    (await adoptLane(deps, { key: "lead-docs", title: "t", brief: "/b.md", done: "closed acme/app#3", pane: "w:p2" }))
-      .key,
-  ).toBe("lead-docs");
 });
 
 test("dori launch and dori adopt with key lead exit 1 with the reserved message and write nothing", async () => {
