@@ -52,7 +52,17 @@ export const withBackoff = async (
 ): Promise<HttpResponse> => {
   let last: HttpResponse | undefined;
   for (let attempt = 0; attempt < policy.attempts; attempt++) {
-    last = await http(req);
+    let res: HttpResponse;
+    try {
+      res = await http(req);
+    } catch (e) {
+      // A network-level failure (timeout, reset, DNS) throws instead of answering with a status. Retrying it is the
+      // difference between a transient blip and a message lost for good; the last attempt rethrows as before.
+      if (attempt === policy.attempts - 1) throw e;
+      await clock.sleep(Math.min(policy.maxMs, policy.baseMs * 2 ** attempt));
+      continue;
+    }
+    last = res;
     if (last.status !== 429 && last.status < 500) return last;
     const header = Number(last.headers["retry-after"]);
     const fromBody = retryAfterFromBody?.(last.body);

@@ -155,3 +155,27 @@ test("Discord messages are sent without pinging anyone and edited in place; thre
     "PATCH /channels/T1",
   ]);
 });
+
+test("a network-level failure is retried with the same backoff and the message lands", async () => {
+  let attempts = 0;
+  const http: Http = async () => {
+    attempts++;
+    if (attempts === 1) throw new Error("socket hang up");
+    return ok({ ok: true, result: { message_id: 5 } });
+  };
+  const { clock, waited } = sleeps();
+  const id = await new Telegram(http, clock, "b").send({ chatId: 1 }, "hi");
+  expect(id).toBe(5);
+  expect(attempts).toBe(2);
+  expect(waited).toEqual([1000]);
+});
+
+test("a network failure on every attempt rethrows the last error after the full backoff ladder", async () => {
+  const http: Http = async () => {
+    throw new Error("connection reset");
+  };
+  const { clock, waited } = sleeps();
+  const err = await new Telegram(http, clock, "b").send({ chatId: 1 }, "hi").catch((e: unknown) => e);
+  expect((err as Error).message).toBe("connection reset");
+  expect(waited).toEqual([1000, 2000, 4000, 8000]);
+});
