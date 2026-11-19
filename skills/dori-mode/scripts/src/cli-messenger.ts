@@ -1,5 +1,6 @@
 /** dori send, presence, inbound and transcribe: the messengers. */
 import { type Command, die, envSlackToken, every, slackAuth } from "./cli-context.ts";
+import { inboundGateway, sendGateway } from "./cli-gateway.ts";
 import { Discord, discordPresence } from "./messenger/discord.ts";
 import { fetchHttp, MessengerError, UnsafeMessageError } from "./messenger/http.ts";
 import { Slack } from "./messenger/slack.ts";
@@ -18,8 +19,10 @@ export const messengerErrors = [MessengerError, UnsafeMessageError, Transcriptio
 
 const NO_SLACK_TOKEN = "DORI_SLACK_TOKEN is not set (nor DORI_SLACK_TOKEN_FILE)";
 
-const send: Command = async ({ key, need, opt, values, config }) => {
-  const platform = key ?? die("send needs slack, telegram or discord");
+const send: Command = async (cli) => {
+  const { key, need, opt, values, config } = cli;
+  const platform = key ?? die("send needs slack, telegram, discord or gateway");
+  if (platform === "gateway") return await sendGateway(cli);
   const to = need("to");
   const text = need("text");
   const token = (name: string) => process.env[name] ?? die(`${name} is not set`);
@@ -138,10 +141,12 @@ const telegramInbound = async (stateDir: string, minutes: number): Promise<void>
   );
 };
 
-const inbound: Command = async ({ key, loopMinutes, config }) => {
+const inbound: Command = async (cli) => {
+  const { key, loopMinutes, config } = cli;
+  if (key === "gateway") return await inboundGateway(cli);
   const minutes = loopMinutes();
   if (key === "telegram") return await telegramInbound(config.stateDir, minutes);
-  if (key !== "slack") die("inbound supports slack or telegram");
+  if (key !== "slack") die("inbound supports slack, telegram or gateway");
   const auth = slackAuth(envSlackToken() ?? die(NO_SLACK_TOKEN));
   const ledger = new ThreadLedger(`${config.stateDir}/slack-threads.json`);
   const slack = new Slack(fetchHttp, realClock, auth, undefined, ledger);
