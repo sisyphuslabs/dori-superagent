@@ -197,7 +197,8 @@ describe("the CLI on an uncertain first delivery (#89 review)", () => {
     const fromLane = d.store.queued(href("w1:p1")).filter((m) => m.from === "fix-x");
     expect(fromLane).toHaveLength(1);
     expect(fromLane[0]!.attempt?.state).toBe("ambiguous");
-    expect(d.store.lane("fix-x")!.log.at(-1)).toMatchObject({ kind: "report", text: "SECRET progress" });
+    // A thread post line follows the report in the log; the report itself is what this asserts.
+    expect(d.store.lane("fix-x")!.log.filter((e) => e.kind !== "thread").at(-1)).toMatchObject({ kind: "report", text: "SECRET progress" });
   });
 
   test("dori ready, ambiguous delivery to the lead: no crash, prints HELD for the lead, exits 3, READY recorded", async () => {

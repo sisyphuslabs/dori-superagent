@@ -75,7 +75,8 @@ export function status(d: Deps): void {
   const show = (ref: SessionRef | undefined) => (ref ? refText(ref) : "-");
   console.log(`lead=${show(roles.lead)} duty=${show(roles.duty)} home=${d.store.root}`);
   for (const l of d.store.lanes()) {
-    const last = l.log.at(-1);
+    // A thread post is bookkeeping beside the lane's own work: `status` shows the last report, not the last post.
+    const last = l.log.filter((e) => e.kind !== "thread").at(-1);
     const age = Math.round((d.now() - l.lastActivityAt) / 60_000);
     console.log(
       `${l.key.padEnd(24)} ${l.status.padEnd(8)} ${l.sessionRef.runtime.padEnd(5)} ${refText(l.sessionRef).padEnd(14)} active ${age}m ago  ${last ? `${last.kind}: ${last.text.slice(0, 60)}` : ""}`,

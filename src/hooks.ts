@@ -9,16 +9,20 @@ export type Hooks = {
   readonly onReady?: ArgvTemplate;
   readonly onReport?: ArgvTemplate;
   readonly onLost?: ArgvTemplate;
+  readonly threadReply?: ArgvTemplate;
+  readonly threadDone?: ArgvTemplate;
   readonly reviewCommand?: ArgvTemplate;
 };
 
 export type HookName = keyof Hooks;
-export type HookVars = Partial<Record<"key" | "text" | "evidence" | "pr" | "repo" | "number" | "sha", string>>;
+export type HookVars = Partial<
+  Record<"key" | "text" | "evidence" | "pr" | "repo" | "number" | "sha" | "thread", string>
+>;
 
 /** `$DORI_HOME/config.json` is present but its `hooks` value is not the documented shape. */
 export class ConfigError extends Error {}
 
-const NAMES: readonly HookName[] = ["onReady", "onReport", "onLost", "reviewCommand"];
+const NAMES: readonly HookName[] = ["onReady", "onReport", "onLost", "threadReply", "threadDone", "reviewCommand"];
 
 function template(name: string, value: unknown): ArgvTemplate {
   if (!Array.isArray(value) || value.length === 0)
@@ -56,10 +60,10 @@ export function loadHooks(root: string): Hooks {
   return hooks;
 }
 
-/** Substitutes `{key}`, `{text}`, `{evidence}`, `{pr}`, `{repo}`, `{number}`, `{sha}` inside each element. */
+/** Substitutes `{key}`, `{text}`, `{evidence}`, `{pr}`, `{repo}`, `{number}`, `{sha}`, `{thread}` inside each element. */
 export function substitute(argv: ArgvTemplate, vars: HookVars): string[] {
   return argv.map((element) =>
-    element.replace(/\{(key|text|evidence|pr|repo|number|sha)\}/g, (whole, k: keyof HookVars) => vars[k] ?? whole),
+    element.replace(/\{(key|text|evidence|pr|repo|number|sha|thread)\}/g, (whole, k: keyof HookVars) => vars[k] ?? whole),
   );
 }
 

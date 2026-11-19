@@ -1,4 +1,4 @@
-/** dori send, presence, inbound and transcribe: the messengers. */
+/** dori send, presence, inbound, reply and transcribe: the messengers. */
 import { type Command, die, envSlackToken, every, slackAuth } from "./cli-context.ts";
 import { Discord, discordPresence } from "./messenger/discord.ts";
 import { fetchHttp, MessengerError, UnsafeMessageError } from "./messenger/http.ts";
@@ -11,12 +11,28 @@ import { formatTelegramInbound } from "./messenger/telegram-line.ts";
 import { ThreadLedger } from "./messenger/thread-ledger.ts";
 import { realTimers } from "./messenger/typing.ts";
 import { transcribe, TranscriptionError } from "./messenger/voice.ts";
+import { type DeliveryEnv, planFromArgv, post } from "./reply.ts";
 import { realClock, run } from "./run.ts";
+import { RefError } from "./thread-ref.ts";
 
 /** Messenger errors are one line, never a stack. */
-export const messengerErrors = [MessengerError, UnsafeMessageError, TranscriptionError] as const;
+export const messengerErrors = [MessengerError, UnsafeMessageError, TranscriptionError, RefError] as const;
 
 const NO_SLACK_TOKEN = "DORI_SLACK_TOKEN is not set (nor DORI_SLACK_TOKEN_FILE)";
+
+/** A base other than slack.com lets a test point the whole messenger surface at a fake API. */
+const slackBase = (): string | undefined => process.env["DORI_SLACK_API"];
+
+/** The credentials and stores `dori reply` posts with; every token is read when the post is made, not at import. */
+const deliveryEnv = (config: { stateDir: string }): DeliveryEnv => ({
+  http: fetchHttp,
+  clock: realClock,
+  slackAuth: () => slackAuth(envSlackToken() ?? die(NO_SLACK_TOKEN)),
+  telegramToken: () => process.env["DORI_TELEGRAM_TOKEN"] ?? die("DORI_TELEGRAM_TOKEN is not set"),
+  discordToken: () => process.env["DORI_DISCORD_TOKEN"] ?? die("DORI_DISCORD_TOKEN is not set"),
+  ledgerFile: `${config.stateDir}/slack-threads.json`,
+  ...(slackBase() !== undefined ? { slackBase: slackBase() as string } : {}),
+});
 
 const send: Command = async ({ key, need, opt, values, config }) => {
   const platform = key ?? die("send needs slack, telegram or discord");
@@ -33,7 +49,7 @@ const send: Command = async ({ key, need, opt, values, config }) => {
       fetchHttp,
       realClock,
       slackAuth(envSlackToken() ?? die(NO_SLACK_TOKEN)),
-      undefined,
+      slackBase(),
       new ThreadLedger(`${config.stateDir}/slack-threads.json`),
     );
     if (ts !== undefined) await slack.edit(to, ts, text);
@@ -73,7 +89,7 @@ const presence: Command = async ({ key }) => {
         die("DORI_SLACK_COOKIE is not set (user-token presence needs the d cookie)"),
     };
     const p = slackPresence(
-      new Slack(fetchHttp, realClock, auth),
+      new Slack(fetchHttp, realClock, auth, slackBase()),
       (url, headers) => {
         const options: Bun.WebSocketOptions = { headers: { ...headers } };
         const ws = new WebSocket(url, options);
@@ -144,7 +160,7 @@ const inbound: Command = async ({ key, loopMinutes, config }) => {
   if (key !== "slack") die("inbound supports slack or telegram");
   const auth = slackAuth(envSlackToken() ?? die(NO_SLACK_TOKEN));
   const ledger = new ThreadLedger(`${config.stateDir}/slack-threads.json`);
-  const slack = new Slack(fetchHttp, realClock, auth, undefined, ledger);
+  const slack = new Slack(fetchHttp, realClock, auth, slackBase(), ledger);
   const me = String((await slack.call("auth.test", {}))["user_id"] ?? die("auth.test returned no user_id"));
   console.log("INBOUND_READY slack");
   const told = new Set<string>();
@@ -164,6 +180,9 @@ export const messengerCommands: Readonly<Record<string, Command>> = {
   send,
   presence,
   inbound,
+  reply: async ({ command, rest, config }) => {
+    console.log(await post(planFromArgv([command, ...rest]), deliveryEnv(config)));
+  },
   transcribe: async ({ key, config }) => {
     console.log(await transcribe(run, config.hooks.transcribe, key ?? die("transcribe needs an audio file path")));
   },

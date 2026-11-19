@@ -4,8 +4,9 @@ import { shq } from "./delivery.ts";
 import { prompt, type Deps } from "./harness.ts";
 import { settled, tellLead, type SendResult } from "./inbox.ts";
 import { Refusal } from "./refusal.ts";
-import { runHook } from "./hooks.ts";
+import { loadHooks, runHook, substitute } from "./hooks.ts";
 import { refText } from "./refs.ts";
+import { parseThreadRef, RefError } from "./thread-ref.ts";
 import { groupId } from "./runtime/group.ts";
 import { openSession } from "./runtime/types.ts";
 import { KEY_RE, reservedKey, type Lane } from "./store-types.ts";
@@ -14,7 +15,7 @@ export async function startLane(
   d: Deps,
   key: string,
   briefFile: string,
-  opts: { cwd?: string; group?: string } = {},
+  opts: { cwd?: string; group?: string; thread?: string } = {},
 ): Promise<Lane> {
   if (!KEY_RE.test(key)) throw new Refusal(`lane key must match ${KEY_RE}`);
   const reserved = reservedKey(key);
@@ -22,6 +23,15 @@ export async function startLane(
   const existing = d.store.lane(key);
   if (existing && existing.status !== "done" && existing.status !== "lost")
     throw new Refusal(`lane ${key} is already open in ${refText(existing.sessionRef)}`);
+  const thread = opts.thread;
+  if (thread !== undefined) {
+    try {
+      parseThreadRef(thread);
+    } catch (e) {
+      if (e instanceof RefError) throw new Refusal(`--thread ${thread}: ${e.message}`);
+      throw e;
+    }
+  }
   const cwd = resolve(opts.cwd ?? process.cwd());
   const briefPath = d.store.briefPath(key);
   const footer = prompt("lane-footer.md", { key, dori: d.doriCmd });
@@ -35,7 +45,9 @@ export async function startLane(
     opts.group ??
     (self?.runtime === rt.kind ? self.group : undefined) ??
     (rt.kind === "herdr" ? await rt.createGroup("dori", cwd) : groupId(d.store.root));
-  const kickoff = `Read your brief at ${briefPath} and execute it. Your lane key is ${key}.`;
+  const kickoff = `Read your brief at ${briefPath} and execute it. Your lane key is ${key}.${
+    thread === undefined ? "" : ` Report milestones into thread ${thread}; dori report, ready and done post there for you.`
+  }`;
   const ref = await openSession(
     rt,
     { name: key, role: "lane", container: "tab", cwd, env: { DORI_LANE: key, DORI_HOME: d.store.root }, group },
@@ -54,6 +66,7 @@ export async function startLane(
     createdAt: now,
     lastActivityAt: now,
     nudges: 0,
+    ...(thread === undefined ? {} : { thread }),
     log: [{ at: now, kind: "start", text: briefFile }],
   };
   d.store.saveLane(lane);
@@ -61,6 +74,62 @@ export async function startLane(
   const open = d.store.lanes().filter((l) => l.status === "working" || l.status === "waiting").length;
   d.usage.record({ name: "dori.lane_started", open_lanes: Math.min(open, 1000) });
   return lane;
+}
+
+const hasThread = (lane: Lane): lane is Lane & { thread: string } =>
+  typeof lane.thread === "string" && lane.thread !== "none";
+
+/**
+ * Posts a lane's text into the lane's own thread. A lane without a thread posts nothing and says so in its log.
+ * A failing hook is recorded and reported to the lead, never thrown: chat health must not decide lane state.
+ * `which` picks the hook: reports and the READY notice use threadReply, a closed lane uses threadDone.
+ */
+async function postThread(
+  d: Deps,
+  lane: Lane,
+  text: string,
+  which: "threadReply" | "threadDone" = "threadReply",
+): Promise<void> {
+  if (!hasThread(lane)) {
+    lane.log.push({ at: d.now(), kind: "thread", text: "thread post skipped: this lane has no thread to post to" });
+    d.store.saveLane(lane);
+    return;
+  }
+  const thread = lane.thread;
+  const hook = loadHooks(d.store.root)[which];
+  if (!hook) {
+    lane.log.push({
+      at: d.now(),
+      kind: "thread",
+      text: `thread post skipped: no ${which} hook configured for ${thread}`,
+    });
+    d.store.saveLane(lane);
+    return;
+  }
+  let code = 0;
+  let err = "";
+  try {
+    const [cmd, ...rest] = substitute(hook, { thread, text, key: lane.key });
+    if (cmd !== undefined) ({ code, stderr: err } = await d.exec(cmd, rest));
+  } catch (e) {
+    code = 1;
+    err = e instanceof Error ? e.message : String(e);
+  }
+  lane.log.push({
+    at: d.now(),
+    kind: "thread",
+    text:
+      code === 0
+        ? `thread post sent to ${thread}`
+        : `thread post to ${thread} failed (exit ${code}): ${err.slice(0, 160)}`,
+  });
+  d.store.saveLane(lane);
+  if (code !== 0)
+    await tellLead(
+      d,
+      `[THREAD ${lane.key}] the thread post failed (exit ${code}); lane is still ${lane.status} and the text reached the lead anyway: ${text}`,
+      lane.key,
+    );
 }
 
 function openLane(d: Deps, key: string): Lane {
@@ -84,7 +153,10 @@ export async function report(
   if (status) lane.status = status;
   d.store.saveLane(lane);
   void runHook(d, "onReport", { key, text, evidence: "" });
-  return settled(tellLead(d, `[REPORT ${key}${status === "waiting" ? " WAITING" : ""}] ${text}`, key));
+  const message = `[REPORT ${key}${status === "waiting" ? " WAITING" : ""}] ${text}`;
+  const sent = await settled(tellLead(d, message, key));
+  await postThread(d, lane, message);
+  return sent;
 }
 
 export async function ready(
@@ -102,7 +174,9 @@ export async function ready(
   lane.lastActivityAt = now;
   lane.log.push({ at: now, kind: "ready", text });
   d.store.saveLane(lane);
-  const sent = await settled(tellLead(d, `[READY ${key}] ${text}\nevidence: ${evidence.join(" ")}`, key));
+  const message = `[READY ${key}] ${text}\nevidence: ${evidence.join(" ")}`;
+  const sent = await settled(tellLead(d, message, key));
+  await postThread(d, lane, message);
   void runHook(d, "onReady", { key, text, evidence: evidence.join(" ") });
   d.usage.record({
     name: "dori.lane_ready",
@@ -124,4 +198,5 @@ export async function done(d: Deps, key: string): Promise<void> {
   lane.status = "done";
   lane.log.push({ at: d.now(), kind: "done", text: "closed by lead" });
   d.store.saveLane(lane);
+  if (lane.final) await postThread(d, lane, lane.final.text, "threadDone");
 }

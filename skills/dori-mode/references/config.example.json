@@ -40,8 +40,22 @@
     "panesMax": 20
   },
   "hooks": {
-    "threadReply": ["my-messenger", "reply", "--thread", "{thread}", "--text", "{text}"],
-    "threadDone": ["my-messenger", "set-status", "--thread", "{thread}", "--status", "done", "--note", "{text}"],
+    "threadReply": [
+      "bun",
+      "/home/you/.dori/src/skills/dori-mode/scripts/src/cli.ts",
+      "reply",
+      "{thread}",
+      "--text",
+      "{text}"
+    ],
+    "threadDone": [
+      "bun",
+      "/home/you/.dori/src/skills/dori-mode/scripts/src/cli.ts",
+      "reply",
+      "{thread}",
+      "--text",
+      "{text}"
+    ],
     "transcribe": ["my-stt", "--file", "{file}"]
   }
 }

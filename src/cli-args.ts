@@ -4,7 +4,9 @@ export const USAGE = `dori - a proactive multi-session harness on herdr or hc + 
 
   dori up [--cwd DIR]                         open lead, duty, duty loop and hourly loop sessions
   dori role <lead|duty> [REF]                 register a session (w1:p3, herdr:w1:p3, hc:t7) as lead or duty (default: this one)
-  dori start <key> --brief FILE [--cwd DIR]   open a lane: new tab, omo session, brief + lane rules
+  dori start <key> --brief FILE [--cwd DIR] [--thread REF]
+                                              open a lane: new tab, omo session, brief + lane rules; REF is
+                                              platform:channel/id, where report, ready and done post a copy
   dori report <key> --text T [--status working|waiting]
   dori ready <key> --text T --evidence LINK [--evidence LINK ...]
   dori send <lead|duty|key|pane> --text T     deliver now, or queue until the pane's agent is idle

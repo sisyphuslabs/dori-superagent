@@ -10,6 +10,10 @@ const READY_HOURS = 2;
 
 const hours = (ms: number): number => Math.floor(ms / HOUR);
 
+/** The last line the lane itself wrote; a thread post is bookkeeping beside the lane's work, not what it is waiting on. */
+const lastNote = (lane: Lane): string | undefined =>
+  lane.log.filter((e) => e.kind !== "thread").at(-1)?.text;
+
 /** The last time the lane itself said something (start or report). Pane polling by the duty loop does not count. */
 const lastReport = (lane: Lane): number =>
   Math.max(lane.createdAt, ...lane.log.filter((e) => e.kind === "start" || e.kind === "report").map((e) => e.at));
@@ -35,7 +39,7 @@ export async function audit(d: Deps, run: LoopRun): Promise<void> {
       const age = hours(now - lastReport(lane));
       run.findings.push(
         lane.status === "waiting"
-          ? `${lane.key} waiting ${age}h on: ${lane.log.at(-1)?.text.slice(0, 80) ?? "?"}`
+          ? `${lane.key} waiting ${age}h on: ${lastNote(lane)?.slice(0, 80) ?? "?"}`
           : `${lane.key} working, no report for ${age}h`,
       );
     }
