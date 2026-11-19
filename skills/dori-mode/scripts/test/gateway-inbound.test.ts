@@ -54,7 +54,7 @@ test("inbound announces the lead session, hands each message to the lead, and ac
 });
 
 test("after a dropped connection the session is announced again and a resent seq is acked without a second hand-off", async () => {
-  // Given a gateway that drops before seeing the ack of seq 1, then resends it with seq 2 on the next connection.
+  // Given a gateway that resends seq 1 on every connection and adds seq 2 on the second one before dropping.
   const gw = memoryGateway(
     (frame, peer) => {
       if (frame["op"] !== "subscribe") return;

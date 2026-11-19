@@ -26,14 +26,15 @@ export const gatewayBootLines = async (
     ]);
     if (result === "timeout") return { failed: true, lines: [`GATEWAY ping timed out after ${deadlineMs} ms`] };
     if (result === null) return { failed: false, lines: ["GATEWAY skipped (no gateway socket)"] };
-    const rules = loadSurfaceRules("gateway");
-    return {
-      failed: false,
-      lines: [
-        `GATEWAY reachable contract=${result.contractVersion ?? "-"}`,
-        `GATEWAY rules rules/dori-bot.md: ${rules.join(" ")}`,
-      ],
-    };
+    const reachable = `GATEWAY reachable contract=${result.contractVersion ?? "-"}`;
+    try {
+      return {
+        failed: false,
+        lines: [reachable, `GATEWAY rules rules/dori-bot.md: ${loadSurfaceRules("gateway").join(" ")}`],
+      };
+    } catch {
+      return { failed: true, lines: [reachable, "GATEWAY rules unreadable rules/dori-bot.md"] };
+    }
   } catch {
     return { failed: true, lines: ["GATEWAY unavailable"] };
   } finally {

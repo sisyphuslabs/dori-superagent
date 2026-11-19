@@ -77,6 +77,8 @@ export class Gateway {
     private readonly socketPath: string,
     private readonly newOpId: () => string = () => crypto.randomUUID(),
     private readonly policy: RetryPolicy = DEFAULT_RETRY,
+    /** How long one request waits for its result before the attempt counts as unavailable. */
+    private readonly answerMs = 10_000,
   ) {}
 
   async post(text: string): Promise<string> {
@@ -129,7 +131,8 @@ export class Gateway {
   /**
    * The long-lived inbound stream: announce the lead session, hand each message or answer to the lead, then ack it.
    * A dropped connection is reopened with backoff and the session announced again; the gateway resends what was not
-   * acked, and a `seq` already handed over is acked again without a second hand-off. Ends with gateway_unavailable
+   * acked, and a `seq` already handed over is acked again without a second hand-off (`seq` is the row's position in
+   * the conversation's stored log, so it only grows, also across a gateway restart). Ends with gateway_unavailable
    * after `policy.attempts` failed connections in a row.
    */
   async subscribe(sessionId: string, lead: LeadPort): Promise<never> {
@@ -177,7 +180,10 @@ export class Gateway {
     const conn = await this.connect(this.socketPath);
     try {
       conn.write(JSON.stringify(frame));
-      for (let line = await conn.next(); line !== undefined; line = await conn.next()) {
+      // A gateway that takes the connection and never answers must not hang the send: the read gives up on the clock.
+      const timedOut = this.clock.sleep(this.answerMs).then(() => undefined);
+      const next = () => Promise.race([conn.next(), timedOut]);
+      for (let line = await next(); line !== undefined; line = await next()) {
         const answer = parseGatewayLine(line);
         if (answer?.op === "result" && (answer.re === frame.op || answer.re === "unknown")) return answer;
       }

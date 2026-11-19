@@ -39,7 +39,13 @@ export type ResultFrame = {
   readonly contract_version?: number;
 };
 
-type InboundBase = { readonly op: "inbound"; readonly seq: number; readonly session_id: string; readonly id: string };
+type InboundBase = {
+  readonly op: "inbound";
+  readonly seq: number;
+  readonly session_id: string;
+  readonly id: string;
+  readonly created_at: number;
+};
 export type InboundFrame = InboundBase &
   (
     | { readonly kind: "message"; readonly text: string }
@@ -63,7 +69,9 @@ export const parseGatewayLine = (line: string): GatewayToDoriFrame | undefined =
   }
   if (!isRecord(v)) return undefined;
   if (v["op"] === "result") return str(v["re"]) && CODES.has(String(v["code"])) ? (v as ResultFrame) : undefined;
+  const created = v["created_at"];
   if (v["op"] !== "inbound" || !seqOf(v["seq"]) || !str(v["session_id"]) || !str(v["id"])) return undefined;
+  if (typeof created !== "number" || !Number.isSafeInteger(created) || created < 0) return undefined;
   if (v["kind"] === "message") return str(v["text"]) ? (v as InboundFrame) : undefined;
   if (v["kind"] === "answer" && str(v["question_id"]) && (str(v["option_id"]) || str(v["text"])))
     return v as InboundFrame;

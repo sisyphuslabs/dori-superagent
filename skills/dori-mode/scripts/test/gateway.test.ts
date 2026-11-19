@@ -85,7 +85,19 @@ test("a retry after a dropped connection, a refused connect or an unavailable an
   // Then every attempt carried op-1, the waits came from the injected clock, and the queued answer counts as sent.
   expect(id).toBe("op-1");
   expect(gw.received.map((f) => f["op_id"])).toEqual(["op-1", "op-1", "op-1"]);
-  expect(clock.slept).toEqual([1_000, 2_000, 4_000]);
+  // Each connected attempt also arms its 10 s answer deadline on the same clock.
+  expect(clock.slept).toEqual([1_000, 10_000, 2_000, 10_000, 4_000, 10_000]);
+});
+
+test("a gateway that takes the connection and never answers ends in gateway_unavailable, not a hang", async () => {
+  // Given a gateway that reads every frame and never replies.
+  const gw = memoryGateway(() => {});
+  const clock = recordingClock();
+  // When the Dori posts; then each attempt gives up at the answer deadline, with the same op_id each time.
+  const sent = new Gateway(gw.connector, clock, SOCK, ids()).post("hello");
+  await expect(sent).rejects.toThrow("gateway_unavailable");
+  expect(gw.received.map((f) => f["op_id"])).toEqual(["op-1", "op-1", "op-1", "op-1", "op-1"]);
+  expect(clock.slept.filter((ms) => ms === 10_000)).toHaveLength(5);
 });
 
 test("with no gateway, a send ends with gateway_unavailable once the backoff is spent", async () => {
@@ -144,7 +156,9 @@ test("the Unix connector carries one line each way over a real socket", async ()
   await new Promise<void>((resolve) => server.listen(path, resolve));
   try {
     // When the client pings through the real connector; then it reads the contract version back.
-    expect(await new Gateway(unixConnector, recordingClock(), path).ping()).toBe(1);
+    // The answer deadline is held open, so only the socket's own reply can settle the ping.
+    const held = { now: () => 0, sleep: () => new Promise<void>(() => {}) };
+    expect(await new Gateway(unixConnector, held, path).ping()).toBe(1);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     rmSync(dir, { recursive: true, force: true });
