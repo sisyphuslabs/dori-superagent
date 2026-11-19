@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { Gateway, gatewaySocketPath, unixConnector } from "../src/messenger/gateway.ts";
 import { MessengerError, UnsafeMessageError } from "../src/messenger/http.ts";
-import { memoryGateway, ok, recordingClock } from "./gateway-fakes.ts";
+import { manualDeadline, memoryGateway, ok, recordingClock } from "./gateway-fakes.ts";
 
 const SOCK = "/run/dori-gateway/dori.sock";
 const ids = () => {
@@ -17,7 +17,8 @@ const ids = () => {
 test("each op writes its documented frame on the socket and returns the row id its op_id names", async () => {
   // Given a gateway that answers every send with ok.
   const gw = memoryGateway((frame, peer) => peer.reply(ok(frame)));
-  const client = new Gateway(gw.connector, recordingClock(), SOCK, ids());
+  const answer = manualDeadline();
+  const client = new Gateway(gw.connector, recordingClock(), SOCK, ids(), undefined, answer.deadline);
   // When the Dori posts, edits, runs a status row through its three phases, asks and sends a receipt.
   const posted = await client.post("hello");
   await client.edit(posted, "hello again");
@@ -66,6 +67,8 @@ test("each op writes its documented frame on the socket and returns the row id i
     { op: "send", kind: "receipt", op_id: "op-7", title: "Order", lines: [{ label: "Total", value: "12,000 KRW" }] },
   ]);
   expect(new Set(gw.paths)).toEqual(new Set([SOCK]));
+  // And every answer deadline was cancelled once its answer was in, so none holds the process open.
+  expect(answer.counts).toEqual({ armed: 7, cancelled: 7 });
 });
 
 test("a retry after a dropped connection, a refused connect or an unavailable answer reuses the same op_id", async () => {
@@ -81,23 +84,22 @@ test("a retry after a dropped connection, a refused connect or an unavailable an
   );
   const clock = recordingClock();
   // When the Dori posts once.
-  const id = await new Gateway(gw.connector, clock, SOCK, ids()).post("hello");
+  const id = await new Gateway(gw.connector, clock, SOCK, ids(), undefined, manualDeadline().deadline).post("hello");
   // Then every attempt carried op-1, the waits came from the injected clock, and the queued answer counts as sent.
   expect(id).toBe("op-1");
   expect(gw.received.map((f) => f["op_id"])).toEqual(["op-1", "op-1", "op-1"]);
-  // Each connected attempt also arms its 10 s answer deadline on the same clock.
-  expect(clock.slept).toEqual([1_000, 10_000, 2_000, 10_000, 4_000, 10_000]);
+  expect(clock.slept).toEqual([1_000, 2_000, 4_000]);
 });
 
 test("a gateway that takes the connection and never answers ends in gateway_unavailable, not a hang", async () => {
   // Given a gateway that reads every frame and never replies.
   const gw = memoryGateway(() => {});
-  const clock = recordingClock();
-  // When the Dori posts; then each attempt gives up at the answer deadline, with the same op_id each time.
-  const sent = new Gateway(gw.connector, clock, SOCK, ids()).post("hello");
+  const answer = manualDeadline(true);
+  // When the Dori posts with every answer deadline already expired; then each attempt gives up, same op_id each time.
+  const sent = new Gateway(gw.connector, recordingClock(), SOCK, ids(), undefined, answer.deadline).post("hello");
   await expect(sent).rejects.toThrow("gateway_unavailable");
   expect(gw.received.map((f) => f["op_id"])).toEqual(["op-1", "op-1", "op-1", "op-1", "op-1"]);
-  expect(clock.slept.filter((ms) => ms === 10_000)).toHaveLength(5);
+  expect(answer.counts).toEqual({ armed: 5, cancelled: 5 });
 });
 
 test("with no gateway, a send ends with gateway_unavailable once the backoff is spent", async () => {
@@ -157,8 +159,10 @@ test("the Unix connector carries one line each way over a real socket", async ()
   try {
     // When the client pings through the real connector; then it reads the contract version back.
     // The answer deadline is held open, so only the socket's own reply can settle the ping.
-    const held = { now: () => 0, sleep: () => new Promise<void>(() => {}) };
-    expect(await new Gateway(unixConnector, held, path).ping()).toBe(1);
+    const answer = manualDeadline();
+    const client = new Gateway(unixConnector, recordingClock(), path, undefined, undefined, answer.deadline);
+    expect(await client.ping()).toBe(1);
+    expect(answer.counts).toEqual({ armed: 1, cancelled: 1 });
   } finally {
     await new Promise((resolve) => server.close(resolve));
     rmSync(dir, { recursive: true, force: true });

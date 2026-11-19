@@ -63,6 +63,19 @@ export const unixConnector: SocketConnector = (path) =>
 
 export const GATEWAY_UNAVAILABLE = "gateway_unavailable";
 
+/** How long one request waits for its answer. Cancelled once the answer is in, so it never holds the process. */
+export type AnswerDeadline = () => { readonly expired: Promise<void>; readonly cancel: () => void };
+
+export const timeoutDeadline =
+  (ms: number): AnswerDeadline =>
+  () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, ms);
+    });
+    return { expired, cancel: () => clearTimeout(timer) };
+  };
+
 /** Hands one user message or answer to the lead session the subscription announced. */
 export type LeadPort = (sessionId: string, inbound: InboundFrame) => Promise<void> | void;
 
@@ -77,8 +90,7 @@ export class Gateway {
     private readonly socketPath: string,
     private readonly newOpId: () => string = () => crypto.randomUUID(),
     private readonly policy: RetryPolicy = DEFAULT_RETRY,
-    /** How long one request waits for its result before the attempt counts as unavailable. */
-    private readonly answerMs = 10_000,
+    private readonly deadline: AnswerDeadline = timeoutDeadline(10_000),
   ) {}
 
   async post(text: string): Promise<string> {
@@ -178,10 +190,11 @@ export class Gateway {
   /** One connection, one frame, the result that answers it; `undefined` when the connection closed first. */
   private async request(frame: DoriToGatewayFrame): Promise<ResultFrame | undefined> {
     const conn = await this.connect(this.socketPath);
+    // A gateway that takes the connection and never answers must not hang the send: the read gives up at the deadline.
+    const deadline = this.deadline();
     try {
       conn.write(JSON.stringify(frame));
-      // A gateway that takes the connection and never answers must not hang the send: the read gives up on the clock.
-      const timedOut = this.clock.sleep(this.answerMs).then(() => undefined);
+      const timedOut = deadline.expired.then(() => undefined);
       const next = () => Promise.race([conn.next(), timedOut]);
       for (let line = await next(); line !== undefined; line = await next()) {
         const answer = parseGatewayLine(line);
@@ -189,6 +202,7 @@ export class Gateway {
       }
       return undefined;
     } finally {
+      deadline.cancel();
       conn.close();
     }
   }

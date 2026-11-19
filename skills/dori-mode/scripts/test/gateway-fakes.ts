@@ -1,4 +1,4 @@
-import type { GatewayConnection, SocketConnector } from "../src/messenger/gateway.ts";
+import type { AnswerDeadline, GatewayConnection, SocketConnector } from "../src/messenger/gateway.ts";
 import type { Clock } from "../src/run.ts";
 
 type Frame = Record<string, unknown>;
@@ -61,6 +61,18 @@ export const recordingClock = (): Clock & { readonly slept: number[] } => {
       at += ms;
     },
   };
+};
+
+/** An answer deadline the test controls: it expires only through `expire`, and counts what was armed and cancelled. */
+export const manualDeadline = (expireAtOnce = false) => {
+  let fire = () => {};
+  const expired = expireAtOnce ? Promise.resolve() : new Promise<void>((resolve) => (fire = resolve));
+  const counts = { armed: 0, cancelled: 0 };
+  const deadline: AnswerDeadline = () => {
+    counts.armed++;
+    return { expired, cancel: () => void counts.cancelled++ };
+  };
+  return { deadline, counts, expire: () => fire() };
 };
 
 export const ok = (frame: Frame) => ({ op: "result", re: frame["op"], code: "ok", op_id: frame["op_id"] });
