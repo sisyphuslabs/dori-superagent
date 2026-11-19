@@ -27,7 +27,7 @@ export type SendFrame = { readonly op: "send"; readonly op_id: string } & (
 export type DoriToGatewayFrame =
   | { readonly op: "ping" }
   | SendFrame
-  | { readonly op: "subscribe"; readonly session_id: string }
+  | { readonly op: "subscribe"; readonly session_id: string; readonly session_path: string }
   | { readonly op: "ack"; readonly seq: number };
 
 export type ResultFrame = {
@@ -51,6 +51,9 @@ export type InboundFrame = InboundBase &
     | { readonly kind: "message"; readonly text: string }
     | { readonly kind: "answer"; readonly question_id: string; readonly option_id?: string; readonly text?: string }
   );
+
+/** The lead session a subscription announces: its id, and the absolute path of its session file. */
+export type AnnouncedSession = { readonly id: string; readonly path: string };
 
 export type GatewayToDoriFrame = ResultFrame | InboundFrame;
 

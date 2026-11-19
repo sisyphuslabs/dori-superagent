@@ -59,8 +59,13 @@ export const formatGatewayInbound = (sessionId: string, i: InboundFrame): string
     : `INBOUND gateway:answer ${sessionId} ${i.question_id} ${i.id} - ${JSON.stringify((i.text ?? "").slice(0, 200))}${i.option_id ? ` option=${i.option_id}` : ""}`;
 
 export const inboundGateway = async (cli: Cli): Promise<void> => {
-  const sessionId =
+  const id =
     cli.opt("session") || process.env["PI_SESSION_ID"] || die("inbound gateway needs --session or PI_SESSION_ID");
+  const path =
+    cli.opt("session-file") ||
+    process.env["PI_SESSION_FILE"] ||
+    die("inbound gateway needs --session-file or PI_SESSION_FILE");
+  if (!path.startsWith("/")) die("--session-file must be an absolute path");
   console.log("INBOUND_READY gateway");
-  await gateway(cli).subscribe(sessionId, (session, inbound) => console.log(formatGatewayInbound(session, inbound)));
+  await gateway(cli).subscribe({ id, path }, (session, inbound) => console.log(formatGatewayInbound(session, inbound)));
 };
