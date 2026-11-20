@@ -1,13 +1,13 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
-import type { SessionRef } from "../../../../src/runtime/types.ts";
+import { AGENT_SESSION_KINDS, type SessionRef } from "../../../../src/runtime/types.ts";
 import { type ChosenRuntimes, type Runner, runtimesFor } from "./run.ts";
 
 export type Proc = { readonly pid: number; readonly ppid: number; readonly cmd: string };
 export type SessionHit = {
   readonly id: string;
-  readonly via: "argv" | "child-env" | "start-time" | "none";
+  readonly via: "argv" | "child-env" | "start-time" | "runtime" | "none";
   readonly pid?: number;
 };
 
@@ -68,6 +68,8 @@ export const resolveSession = async (
   table: readonly Proc[],
   deps: SessionDeps,
 ): Promise<SessionHit> => {
+  // An agent session's ref is its omo session id: no process to search.
+  if (AGENT_SESSION_KINDS.has(ref.runtime)) return { id: ref.id, via: "runtime" };
   const rootPid = await rootPidOf(ref, deps);
   // The root itself is a candidate: an agent run directly as the session's program has no shell above it.
   const candidates = rootPid ? [...table.filter((p) => p.pid === rootPid), ...descendants(table, rootPid)] : [];
