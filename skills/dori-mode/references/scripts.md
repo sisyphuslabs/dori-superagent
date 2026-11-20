@@ -32,7 +32,7 @@ Needs: bun 1.3+, herdr or hc, git, and the GitHub CLI (`gh`) for `merged`/`close
 | `sessionsDir` | `~/.omo/agent/sessions` | session-id lookup |
 | `nudgeAfterMin`, `postAfterMin` | 15, 20 | `freshness` |
 | `closeAfterMin` | 5 | `watch` |
-| `heavySlots`, `heavyMaxLoad` | 1, 80 | `heavy` |
+| `heavyMinSlots`, `heavyMaxSlots`, `heavyJobMemGb`, `heavyMaxLoad` | 1, 4, 4, 80 | `heavy` (the old `heavySlots` is read as `heavyMaxSlots`) |
 | `deadPanePatterns` | `has stopped`, `no suitable jobs` | `dead-panes` |
 | `guard` | load 150/80, 20% memory, 50 GB disk, 20 panes | `guard` |
 | `hooks.threadReply`, `hooks.threadDone` | none | `freshness`, `close` |
@@ -187,4 +187,4 @@ Prints `INBOUND <source> <chat> <thread> <update-id> mid=<message_id> <from> <te
 Runs `hooks.transcribe` and prints the transcript. A failed or empty transcription is an error, never an empty message.
 
 ### `dori heavy <label> -- <command ...>`
-Waits until load is under `heavyMaxLoad` and one of `heavySlots` is free, then runs the command and frees the slot when it exits. A slot held by a process that no longer exists (or a zombie) is taken over. Use it for full builds and test suites. Installs, focused tests and git do not need it.
+Waits for a slot under the dynamic limit, then runs the command and frees the slot when it exits. The limit is the running jobs plus as many `heavyJobMemGb` jobs as fit in free memory above `guard.memFreeMinPct` (jobs started in the last 2 minutes are reserved at that estimate), no new job while load is at or over `heavyMaxLoad`, and always between `heavyMinSlots` and `heavyMaxSlots`: the floor runs even under high load or low memory (set `heavyMinSlots: 0` to gate every job on load). A lower limit never stops a running job; it only holds new ones. While waiting it prints `HEAVY_WAIT <label> limit N of MIN-MAX (memory|load|floor|ceiling), ...` to stderr each time the decision changes, and `HEAVY_START` when it runs. `dori heavy --status` prints the current limit, its reason and the held slots. A slot held by a process that no longer exists (or a zombie) is taken over. Use it for full builds and test suites. Installs, focused tests and git do not need it.

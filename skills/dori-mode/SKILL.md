@@ -109,6 +109,6 @@ Real work runs in its own session, called a lane: a herdr tab, or a labelled ter
 | `dori freshness` | nudge silent lanes, post their last report to their thread; block lanes at their wall, token or cost ceiling; flag hung calls |
 | `dori dead-panes` | report agent panes that stopped |
 | `dori guard` | host load, memory, disk and pane-count alerts |
-| `dori heavy <label> -- <cmd>` | run a heavy command only when a slot is free and load is low |
+| `dori heavy <label> -- <cmd>` | run a heavy command when free memory and load allow one more (`--status` shows the current limit and why) |
 | `dori can-launch` | is there room for a new lane? exit 4 with the reasons if not |
 | `dori send` / `dori presence` / `dori transcribe` | messenger utilities: post or edit on Slack, Telegram or Discord; stay shown online; voice note to text |
