@@ -11,7 +11,15 @@ import { isOn, OS_TYPE, otlpLogs, rejectedRecords } from "./telemetry-otlp.ts";
 
 const HOUR_MS = 3_600_000;
 
-export type MergeOutcome = "merged" | "no_receipt" | "review_block" | "no_checks" | "checks_red" | "checks_all_skipped";
+export type MergeOutcome =
+  | "merged"
+  | "no_receipt"
+  | "review_block"
+  | "no_checks"
+  | "checks_red"
+  | "checks_all_skipped"
+  | "workflow_pending"
+  | "workflow_status_unknown";
 export type DutyCounts = { ticks: number; flushed: number; nudges: number; escalations: number; lost: number };
 
 export type TelemetryEvent =

@@ -174,6 +174,8 @@ lead 是唯一和你说话的会话（`prompts/lead.md`）。lane 规则把每�
 
 接着 `gh pr checks` 必须返回至少一个检查，每个检查都必须是 `pass` 或 `skipping`，且至少一个是 `pass`。空的检查列表会被拒绝，理由是 "an empty check list is never green"。review 之后的 push 会改变 head SHA，receipt 就不再匹配，`dori review` 需要重新运行。
 
+fork PR 的 `pull_request` 工作流可能在等待维护者批准，或者启动失败、被取消，而不留下 check run，因此 `gh pr checks` 永远不会列出它，只有 `pass`/`skipping` 的检查列表会把它漏掉。所以 `dori merge` 还会读取精确 head 的 `pull_request` 运行（`gh api repos/<owner>/<repo>/actions/runs?head_sha=<head>&event=pull_request`），只要任一工作流的最新运行没有以 `success`、`skipped` 或 `neutral` 完成就拒绝合并：`MERGE_REFUSED pull_request workflow run(s) not green at head <sha>: ci=action_required`。每个工作流只统计最新的一次运行，因此重新打开 PR 留下的旧 cancelled 或 stale 运行不会阻止合并，其他 head 或其他事件（`push`、`pull_request_target`）的运行也从不阻止合并。如果无法读取运行列表（私有仓库没有 Actions 读取权限、Actions 已关闭、响应被截断或格式错误），则拒绝合并，而不是当作绿。拒绝会说明原因：`Actions status unavailable (permission denied or Actions disabled)`，并且在能够核实工作流状态之前合并一直保持拒绝；正确做法是使用具有 Actions 读取权限的凭据或调整仓库的 Actions 设置，而不是绕过。`--dry-run` 也执行同样的检查。
+
 ### 给你自己工具用的 hook
 
 `$DORI_HOME/config.json` 可以在 `hooks` 下指定 argv 模板：`onReady`、`onReport` 和 `onLost` 在对应事件发生时于后台运行（每个参数中的 `{key}`、`{text}` 和 `{evidence}` 会被填入），`reviewCommand` 可以替换内置的 reviewer，只要它打印同样的 `VERDICT:` 行。`DORI_PROMPTS_DIR` 让 harness 使用你自己的提示词副本。

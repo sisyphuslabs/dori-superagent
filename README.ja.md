@@ -174,6 +174,8 @@ hcにはワークスペースもタブもありません。Doriはセッショ�
 
 次に、`gh pr checks` が少なくとも1つのチェックを返し、すべてのチェックが `pass` か `skipping` で、少なくとも1つが `pass` である必要があります。チェック一覧が空なら "an empty check list is never green" として拒否されます。レビュー後にプッシュするとhead SHAが変わるので、レシートが一致しなくなり、`dori review` をもう一度実行する必要があります。
 
+フォーク PR の `pull_request` ワークフローは、メンテナの承認待ちになるほか、起動に失敗したりキャンセルされたりしても check run を残さないため、`gh pr checks` には現れず、`pass`/`skipping` だけの一覧では見落とします。そこで `dori merge` は正確な head の `pull_request` 実行も読み取り（`gh api repos/<owner>/<repo>/actions/runs?head_sha=<head>&event=pull_request`）、どのワークフローも最新の実行が `success`・`skipped`・`neutral` として完了していなければマージを拒否します: `MERGE_REFUSED pull_request workflow run(s) not green at head <sha>: ci=action_required`。ワークフローごとに最新の実行だけを数えるので、PR を開き直したときの古いキャンセル済み・stale 実行はブロックせず、別の head や別イベント（`push`、`pull_request_target`）の実行もブロックしません。実行を取得できない場合（Actions の読み取り権限がないプライベートリポジトリ、Actions 無効、応答の切り詰めや破損）は、緑とみなさずマージを拒否します。拒否は原因（`Actions status unavailable (permission denied or Actions disabled)`）を示し、ワークフローの状態を確認できるまでマージは拒否されたままです。Actions の読み取り権限を持つ資格情報か、リポジトリの Actions 設定が出口であり、回避策ではありません。`--dry-run` も同じチェックを通ります。
+
 ### 自前のツール用のフック
 
 `$DORI_HOME/config.json` の `hooks` 以下に、argvテンプレートを指定できます。`onReady`、`onReport`、`onLost` はそれぞれのイベントでバックグラウンド実行され、引数ごとに `{key}`、`{text}`、`{evidence}` が埋め込まれます。`reviewCommand` は、同じ `VERDICT:` 行を出力する限り、組み込みのレビュアーの代わりになります。`DORI_PROMPTS_DIR` を使うと、ハーネスが自分用にコピーしたプロンプトを使うようになります。

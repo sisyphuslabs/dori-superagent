@@ -21,7 +21,8 @@ export const USAGE = `dori - a proactive multi-session harness on herdr or hc + 
   dori backlog list | decide <id> --text ANSWER | drop <id> [--text WHY]
   dori backlog import <owner/repo> [--label dori] [--cwd DIR]   open labelled issues -> items
   dori review <owner/repo#N> [--model M]      fresh omo reviewer at the exact head -> receipt
-  dori merge <owner/repo#N> [--dry-run]       CLEAR receipt at head + green checks -> squash merge
+  dori merge <owner/repo#N> [--dry-run]       CLEAR receipt at head + green checks and pull_request workflows
+                                              (refused while workflow status cannot be verified)
   dori done <key>                             lead closes a READY lane
   dori migrate [--to hc|herdr] (--lane K | --role lead|duty|duty-loop|hourly-loop | --all) [--dry-run]
                [--wait-minutes N] [--resume]  hand sessions over to another runtime; MIGRATED, SKIP, DEFERRED,
