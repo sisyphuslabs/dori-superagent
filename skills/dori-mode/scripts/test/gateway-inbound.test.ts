@@ -6,8 +6,6 @@ import type { InboundFrame } from "../src/messenger/gateway-frames.ts";
 import { memoryGateway, recordingClock } from "./gateway-fakes.ts";
 
 const SESSION = "0b8f3c1e-session";
-const SESSION_FILE = "/sessions/lead.jsonl";
-const ANNOUNCED = { id: SESSION, path: SESSION_FILE };
 const message = (seq: number, text: string) => ({
   op: "inbound",
   seq,
@@ -38,10 +36,10 @@ test("inbound announces the lead session, hands each message to the lead, and ac
     handed.push([session, inbound]);
   };
   // When the Dori subscribes as its lead session, until the gateway is gone.
-  const done = new Gateway(gw.connector, recordingClock(), "/run/dori-gateway/dori.sock").subscribe(ANNOUNCED, lead);
+  const done = new Gateway(gw.connector, recordingClock(), "/run/dori-gateway/dori.sock").subscribe(SESSION, lead);
   await expect(done).rejects.toThrow("gateway_unavailable");
   // Then the subscription named the session, both inbound frames reached the lead with that id, each acked after it.
-  expect(gw.received[0]).toEqual({ op: "subscribe", session_id: SESSION, session_path: SESSION_FILE });
+  expect(gw.received[0]).toEqual({ op: "subscribe", session_id: SESSION });
   expect(handed.map(([session, i]) => [session, i.kind, i.seq])).toEqual([
     [SESSION, "message", 1],
     [SESSION, "answer", 2],
@@ -69,7 +67,7 @@ test("after a dropped connection the session is announced again and a resent seq
   );
   const handed: number[] = [];
   const clock = recordingClock();
-  const done = new Gateway(gw.connector, clock, "/sock").subscribe(ANNOUNCED, (_, i) => void handed.push(i.seq));
+  const done = new Gateway(gw.connector, clock, "/sock").subscribe(SESSION, (_, i) => void handed.push(i.seq));
   await expect(done).rejects.toThrow("gateway_unavailable");
   // Then seq 1 reached the lead once, was acked on both connections, and the reconnects waited on the injected clock.
   expect(handed).toEqual([1, 2]);

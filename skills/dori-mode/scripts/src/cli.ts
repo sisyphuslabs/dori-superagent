@@ -57,8 +57,7 @@ const USAGE = `dori <command> [options]
   transcribe <audio-file>              run hooks.transcribe and print the text
   inbound slack|telegram [--loop MIN]  print INBOUND lines: Slack unread thread replies / Telegram owner DMs, edits and media + configured topic
                                        the Dori posted in (any helper), DMs and channels with unread mentions
-  inbound gateway [--session ID] [--session-file PATH]
-                                       subscribe as the lead session (default PI_SESSION_ID, PI_SESSION_FILE); print INBOUND lines, ack each`;
+  inbound gateway [--session ID]       subscribe as the lead session (default PI_SESSION_ID); print INBOUND lines, ack each`;
 
 const config = await loadConfig().catch((e: unknown) =>
   e instanceof ConfigError ? die(e.message) : Promise.reject(e),
@@ -109,7 +108,6 @@ const flags = parseArgs({
     receipt: { type: "string" },
     line: { type: "string", multiple: true },
     session: { type: "string" },
-    "session-file": { type: "string" },
   },
 });
 

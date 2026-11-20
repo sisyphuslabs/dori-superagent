@@ -2,7 +2,6 @@ import { connect } from "node:net";
 
 import type { Clock } from "../run.ts";
 import {
-  type AnnouncedSession,
   type DoriToGatewayFrame,
   type InboundFrame,
   parseGatewayLine,
@@ -148,19 +147,13 @@ export class Gateway {
    * the conversation's stored log, so it only grows, also across a gateway restart). Ends with gateway_unavailable
    * after `policy.attempts` failed connections in a row.
    */
-  async subscribe(session: AnnouncedSession, lead: LeadPort): Promise<never> {
+  async subscribe(sessionId: string, lead: LeadPort): Promise<never> {
     let handed = 0;
     for (let failures = 0; ; ) {
       const conn = await this.connect(this.socketPath).catch(() => undefined);
       if (conn) {
         try {
-          conn.write(
-            JSON.stringify({
-              op: "subscribe",
-              session_id: session.id,
-              session_path: session.path,
-            } satisfies DoriToGatewayFrame),
-          );
+          conn.write(JSON.stringify({ op: "subscribe", session_id: sessionId } satisfies DoriToGatewayFrame));
           for (let line = await conn.next(); line !== undefined; line = await conn.next()) {
             const frame = parseGatewayLine(line);
             if (frame?.op === "result" && frame.re === "subscribe")
@@ -168,7 +161,7 @@ export class Gateway {
               else throw new MessengerError(`gateway refused the subscription: ${frame.code}`, 0, frame.code);
             if (frame?.op !== "inbound") continue;
             if (frame.seq > handed) {
-              await lead(session.id, frame);
+              await lead(sessionId, frame);
               handed = frame.seq;
             }
             conn.write(JSON.stringify({ op: "ack", seq: frame.seq } satisfies DoriToGatewayFrame));

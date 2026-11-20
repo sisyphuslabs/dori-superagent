@@ -21,7 +21,7 @@ The client holds no token and knows nothing about where the chat lives: it write
 | `send` | `kind: "status"`, `op_id`, `status_id`, `phase`, `text`, `rows` | One status row edited in place. `phase: "start"` creates row `status_id` (the client uses the start's `op_id`), `update` and `stop` change it. `rows` is a list of `{ id, label, state }` with `state` one of `running`, `done`, `failed` (at most 50). |
 | `send` | `kind: "question"`, `op_id`, `text`, `options` | A question with options `{ id, label }` (at most 8). The question's id is its `op_id`; the answer comes back inbound. |
 | `send` | `kind: "receipt"`, `op_id`, `title`, `lines` | A receipt: a title and `{ label, value }` lines (at most 20). |
-| `subscribe` | `session_id`, `session_path` | Opens the inbound stream and announces the lead session it belongs to: its id and the absolute path of its session file. |
+| `subscribe` | `session_id` | Opens the inbound stream and announces the lead session it belongs to. |
 | `ack` | `seq` | The Dori has taken inbound `seq`. |
 
 Ids (`op_id`, `target_id`, `status_id`, option and row ids) match `[A-Za-z0-9_-]{1,64}`. A text is 1 to 32,768 characters; a label, title or value 1 to 200.
@@ -61,7 +61,7 @@ An answer names its question and carries `option_id`, `text`, or both.
 - `--status start|update|stop --text T [--status-id ID] [--row running:LABEL ...]` prints `STATUS <id>`; rows are numbered `r1`, `r2`, ... by position.
 - `--question --text T --option LABEL --option LABEL ...` prints `QUESTION <id>`; options are numbered `o1`, `o2`, ...
 - `--receipt TITLE --line LABEL=VALUE ...` prints `SENT <id>`.
-- `dori inbound gateway [--session ID] [--session-file PATH]` subscribes as the lead session (default `PI_SESSION_ID` and `PI_SESSION_FILE`), prints `INBOUND_READY gateway`, then one line per message, in the other messengers' field order:
+- `dori inbound gateway [--session ID]` subscribes as the lead session (default `PI_SESSION_ID`), prints `INBOUND_READY gateway`, then one line per message, in the other messengers' field order:
 
 ```
 INBOUND gateway <session> - <id> - <json text>
