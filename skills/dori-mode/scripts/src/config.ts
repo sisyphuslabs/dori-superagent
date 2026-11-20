@@ -48,8 +48,6 @@ export type DoriConfig = {
   /** Expected Git author and committer per lowercase `owner/repo`, for `verify-pr` and the lane footer. */
   readonly repoIdentities: Readonly<Record<string, CommitIdentity>>;
   readonly supervision: SupervisionOptions;
-  /** The dori.bot surface: the gateway's local socket. No token; DORI_GATEWAY_SOCKET overrides the path. */
-  readonly gateway: { readonly socket: string };
 };
 
 export const defaultConfig = (home = homedir()): DoriConfig => ({
@@ -79,7 +77,6 @@ export const defaultConfig = (home = homedir()): DoriConfig => ({
     staleAfterMinutes: 20,
     defaults: { wallMinutes: null, tokens: null, costUsd: null },
   },
-  gateway: { socket: "/run/dori-gateway/dori.sock" },
 });
 
 export const configPath = (): string => process.env["DORI_CONFIG"] ?? join(homedir(), ".dori", "config.json");
@@ -182,7 +179,6 @@ export const loadConfig = async (path = configPath(), home = homedir()): Promise
     ...raw,
     guard: { ...base.guard, ...raw.guard },
     hooks: { ...base.hooks, ...raw.hooks },
-    gateway: { ...base.gateway, ...raw.gateway },
     repoIdentities: repoIdentities(raw.repoIdentities),
     // Only a string is a marker: null or false would quietly turn the goal check off, and an object would never show.
     goalMarker: typeof raw.goalMarker === "string" ? raw.goalMarker : base.goalMarker,

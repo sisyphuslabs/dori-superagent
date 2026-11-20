@@ -49,15 +49,10 @@ const USAGE = `dori <command> [options]
   can-launch                           exit 0 if the host has room for a new lane, else print why and exit 4
   send <slack|telegram|discord> --to TARGET --text TEXT [--thread ID] [--edit ID]
                                        post or edit a message (tokens from DORI_SLACK_TOKEN or the file DORI_SLACK_TOKEN_FILE names, DORI_TELEGRAM_TOKEN, DORI_DISCORD_TOKEN)
-  send gateway --text TEXT [--edit ID] the dori.bot surface over the local socket (DORI_GATEWAY_SOCKET, default /run/dori-gateway/dori.sock)
-  send gateway --status start|update|stop --text TEXT [--status-id ID] [--row running|done|failed:LABEL ...]
-  send gateway --question --text TEXT --option LABEL --option LABEL ...
-  send gateway --receipt TITLE --line LABEL=VALUE ...
   presence <slack|discord>             keep the account shown as online until stopped
   transcribe <audio-file>              run hooks.transcribe and print the text
   inbound slack|telegram [--loop MIN]  print INBOUND lines: Slack unread thread replies / Telegram owner DMs, edits and media + configured topic
-                                       the Dori posted in (any helper), DMs and channels with unread mentions
-  inbound gateway [--session ID]       subscribe as the lead session (default PI_SESSION_ID); print INBOUND lines, ack each`;
+                                       the Dori posted in (any helper), DMs and channels with unread mentions`;
 
 const config = await loadConfig().catch((e: unknown) =>
   e instanceof ConfigError ? die(e.message) : Promise.reject(e),
@@ -100,14 +95,6 @@ const flags = parseArgs({
     global: { type: "boolean" },
     source: { type: "string" },
     open: { type: "boolean" },
-    status: { type: "string" },
-    "status-id": { type: "string" },
-    row: { type: "string", multiple: true },
-    question: { type: "boolean" },
-    option: { type: "string", multiple: true },
-    receipt: { type: "string" },
-    line: { type: "string", multiple: true },
-    session: { type: "string" },
   },
 });
 
