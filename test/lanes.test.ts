@@ -84,4 +84,23 @@ describe("startLane group fallback", () => {
     expect(group).toMatch(/^dori\.group=[0-9a-f]{8}$/);
     expect(run.join(" ")).not.toContain("w9");
   });
+
+  test("an omo lane opens through omo alone and is handed its brief inline, not a path on this machine", async () => {
+    const { w, d, brief } = setup({ runtime: "omo" });
+    await withEnv(clear, async () => {
+      await startLane(d, "omo-lane", brief);
+    });
+    const lane = w.calls.filter((c) => c.cmd === "omo").map((c) => c.argv);
+    expect(lane[0]?.slice(0, 3)).toEqual(["remote", "open", "peer"]);
+    const sent = lane.find((a) => a[1] === "send");
+    expect(sent?.[2]).toBe("peer/s1");
+    expect(sent?.[3]).toStartWith("Your lane key is omo-lane. Execute this brief:");
+    expect(sent?.[3]).toContain("Fix the flaky login test.");
+    // The fixture's lead is a herdr pane, so only the lead's notice may touch herdr.
+    const herdr = w.calls.filter((c) => c.cmd === "herdr").map((c) => c.argv.join(" "));
+    expect(herdr.length).toBeGreaterThan(0);
+    expect(herdr.every((call) => call.includes("w1:p1"))).toBe(true);
+    expect(w.calls.some((c) => c.cmd === "hc")).toBe(false);
+    expect(d.store.lane("omo-lane")?.sessionRef).toEqual({ runtime: "omo", id: "peer/s1", group: expect.any(String) });
+  });
 });

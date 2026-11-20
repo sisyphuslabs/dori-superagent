@@ -2,7 +2,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { World, href } from "./fake.ts";
 
-export function setup(opts: { runtime?: "herdr" | "hc" } = {}) {
+export function setup(opts: { runtime?: "herdr" | "hc" | "omo" } = {}) {
   const w = new World();
   const d = w.deps(opts);
   const lead = w.addPane("w1:p1", "idle");

@@ -5,6 +5,7 @@ import type { Deps } from "../src/harness.ts";
 import type { Exec } from "../src/runtime/exec.ts";
 import { HcRuntime } from "../src/runtime/hc/index.ts";
 import { HerdrRuntime } from "../src/runtime/herdr/index.ts";
+import { OmoRuntime } from "../src/runtime/omo/index.ts";
 import { Runtimes } from "../src/runtime/registry.ts";
 import type { AgentStatus, RuntimeKind, SessionRef } from "../src/runtime/types.ts";
 import { Store, type HostLoad } from "../src/store.ts";
@@ -71,6 +72,10 @@ export class World {
     stdout: "VERDICT: CLEAR",
   });
 
+  /** `omo remote` for deps({ runtime: "omo" }): opens sessions on device "peer"; every other verb answers ok. */
+  omoAnswer = (argv: readonly string[]): unknown =>
+    argv[1] === "open" ? { kind: "ok", thread: { device: "peer", thread_id: `s${this.next++}` } } : { kind: "ok" };
+
   addPane(id: string, status: AgentStatus = "idle"): Pane {
     const p = { status, received: [], ran: [] };
     this.panes.set(id, p);
@@ -95,6 +100,8 @@ export class World {
     }
     if (cmd === "gh") return { ...this.gh(argv), stderr: "" };
     if (cmd === "hc") return this.hc.exec(cmd, argv);
+    if (cmd === "omo" && argv[0] === "remote")
+      return { code: 0, stdout: JSON.stringify(this.omoAnswer(argv)), stderr: "" };
     if (cmd !== "herdr") return { stderr: "", ...this.reviewer(argv) };
     const ok = (result: unknown) => ({ code: 0, stdout: JSON.stringify({ result }), stderr: "" });
     const [group, verb, id] = argv;
@@ -172,7 +179,11 @@ export class World {
     return {
       store: new Store(mkdtempSync(join(tmpdir(), "dori-test-"))),
       runtimes: new Runtimes(kind, (k) =>
-        k === "hc" ? new HcRuntime(this.exec, { ...quiet, log: () => {} }) : new HerdrRuntime(this.exec, "", quiet),
+        k === "hc"
+          ? new HcRuntime(this.exec, { ...quiet, log: () => {} })
+          : k === "omo"
+            ? new OmoRuntime(this.exec, { env: { DORI_OMO_DEVICE: "peer" }, log: () => {} })
+            : new HerdrRuntime(this.exec, "", quiet),
       ),
       choice: () => ({ kind, source: "config" }),
       exec: this.exec,

@@ -1,6 +1,6 @@
-# Session runtimes: herdr and hc
+# Session runtimes: herdr, hc and omo
 
-**Dori runs its sessions on herdr or on hc (herdr-core), chosen by the `runtime` key in `$DORI_HOME/config.json`; sessions on both can live in one home, and `dori migrate` moves them from one runtime to the other.**
+**Dori runs its sessions on herdr, on hc (herdr-core) or on omo (through the relay, no terminal multiplexer), chosen by the `runtime` key in `$DORI_HOME/config.json`; sessions on both can live in one home, and `dori migrate` moves them from one runtime to the other.**
 
 A session is one terminal with an agent or a loop in it: the lead, duty, the duty loop, the hourly loop, or a lane. herdr gives Dori workspaces, tabs and panes and detects the agent in a pane. hc gives Dori plain terminals with labels, and the agent in a terminal reports its own status. The harness talks to both through one interface, and nothing above that interface knows which runtime it is using.
 
@@ -29,17 +29,29 @@ A session is stored as a `SessionRef`: the runtime, the id (`w1:p3` on herdr, `t
 
 New sessions open on one runtime, picked in this order (`readRuntimeChoice` in `src/runtime/select.ts`):
 
-1. `DORI_RUNTIME=herdr` or `DORI_RUNTIME=hc`.
-2. `"runtime": "herdr"` or `"runtime": "hc"` in `$DORI_HOME/config.json` (default `~/.dori/config.json`). This is the same file the dori-mode skill reads, so one line sets both.
+1. `DORI_RUNTIME=herdr`, `DORI_RUNTIME=hc` or `DORI_RUNTIME=omo`.
+2. `"runtime": "herdr"`, `"hc"` or `"omo"` in `$DORI_HOME/config.json` (default `~/.dori/config.json`). This is the same file the dori-mode skill reads, so one line sets both.
 3. `HC_TERMINAL_ID` is set: Dori runs inside an hc terminal, so hc.
 4. `HERDR_PANE_ID` is set: Dori runs inside a herdr pane, so herdr.
-5. The binaries on PATH: hc (herdr-core) when it is installed, else herdr. hc is the default runtime; with both installed, herdr is one config line away.
+5. The binaries on PATH: hc (herdr-core) when it is installed, else omo, else herdr. hc is the default runtime; the others are one config line away.
 
-When neither binary is on PATH and nothing above decides, Dori refuses and prints the fix in one line:
+When none of the three is on PATH and nothing above decides, Dori refuses and prints the fix in one line:
 
 ```
-neither herdr nor hc is on PATH: install hc (herdr-core) or herdr, or set "runtime": "herdr" or "hc" in <DORI_HOME>/config.json, or DORI_RUNTIME
+none of hc, omo or herdr is on PATH: install omo, hc (herdr-core) or herdr, or set "runtime": "herdr", "hc" or "omo" in <DORI_HOME>/config.json, or DORI_RUNTIME
 ```
+
+## The omo runtime
+
+The omo runtime (`src/runtime/omo/`) needs only the `omo` CLI and its device service: every step is one `omo remote <verb> --json` call, so a session can live on this device or on any other signed-in device of the same account, reached through the relay. No herdr, hc or bunshin binary is involved.
+
+- `DORI_OMO_DEVICE` names the device new sessions open on; unset, they open on the device `omo remote devices` marks as this one. `DORI_OMO_BIN` names the binary (default `omo`). `DORI_OMO_SELF` (`<device>/<session>`) tells Dori its own session, which omo does not expose to a session's shell yet.
+- A ref is `omo:<device>/<session>`.
+- `create` is `omo remote open <device> --project <cwd>`. `start` applies the agent command instead of typing it: `--model` becomes `omo remote model`, then the `--append-system-prompt` text and the prompt are sent with `omo remote send --no-wait`. Any other flag is refused.
+- `list` and `probe` read `omo remote sessions`; `running` is working, `idle` is idle, `ended` is gone.
+- `deliver` is `omo remote send --no-wait` (with `--follow-up` when it may queue behind a running turn); Escape is `omo remote interrupt`; `close` is `omo remote close`.
+- A lane opened on omo is handed its brief inline, because its device may not have this home's files.
+- Not available yet, each a typed error or a logged line rather than a silent no-op: reading a session's screen or transcript (`read`), typing into a shell, setting env on a session omo opens, and labels to group sessions by.
 
 (The real message prints the absolute path of your config file.)
 

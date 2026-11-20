@@ -74,6 +74,17 @@ describe("readRuntimeChoice precedence", () => {
       "detect:path",
     ],
     ["both on PATH, hc's directory first: still hc", { PATH: pathWith("hc", "herdr") }, "{}", "hc", "detect:path"],
+    ["only omo on PATH: the omo runtime", { PATH: pathWith("omo") }, undefined, "omo", "detect:path"],
+    ["omo and herdr on PATH: omo before herdr", { PATH: pathWith("herdr", "omo") }, undefined, "omo", "detect:path"],
+    ["hc and omo on PATH: hc still wins", { PATH: pathWith("omo", "hc") }, undefined, "hc", "detect:path"],
+    [
+      "DORI_RUNTIME=omo inside an hc terminal",
+      { DORI_RUNTIME: "omo", HC_TERMINAL_ID: "t3", PATH: both },
+      undefined,
+      "omo",
+      "env",
+    ],
+    ["config omo with only hc installed", { PATH: pathWith("hc") }, '{"runtime":"omo"}', "omo", "config"],
     [
       "empty variables count as unset",
       { DORI_RUNTIME: "", HC_TERMINAL_ID: "", HERDR_PANE_ID: "", PATH: pathWith("hc") },
@@ -98,9 +109,9 @@ describe("readRuntimeChoice refusals", () => {
     }
     expect(caught).toBeInstanceOf(RuntimeChoiceError);
     const message = (caught as Error).message;
-    expect(message).toContain("neither herdr nor hc is on PATH");
+    expect(message).toContain("none of hc, omo or herdr is on PATH");
     expect(message).toContain(configPath);
-    expect(message).toContain('"runtime": "herdr" or "hc"');
+    expect(message).toContain('"runtime": "herdr", "hc" or "omo"');
     expect(message).toContain("DORI_RUNTIME");
     expect(() => readRuntimeChoice({ env: {}, configPath: NO_CONFIG })).toThrow(RuntimeChoiceError);
   });
@@ -159,6 +170,7 @@ describe("readRuntimeChoice PATH detection is injectable", () => {
       source: "detect:path",
     });
     expect(asked).toContain("/a/herdr");
+    expect(asked).toContain("/a/omo");
     expect(asked).toContain("/b/hc");
   });
 

@@ -25,7 +25,8 @@ export async function startLane(
   const cwd = resolve(opts.cwd ?? process.cwd());
   const briefPath = d.store.briefPath(key);
   const footer = prompt("lane-footer.md", { key, dori: d.doriCmd });
-  await Bun.write(briefPath, `${readFileSync(briefFile, "utf8").trimEnd()}\n\n${footer}`);
+  const briefText = `${readFileSync(briefFile, "utf8").trimEnd()}\n\n${footer}`;
+  await Bun.write(briefPath, briefText);
 
   // The group is the caller's own when it runs in a session of the selected runtime (a lane opened from the lead's
   // workspace stays there); otherwise herdr gets a new "dori" workspace and hc this home's group label.
@@ -35,7 +36,11 @@ export async function startLane(
     opts.group ??
     (self?.runtime === rt.kind ? self.group : undefined) ??
     (rt.kind === "herdr" ? await rt.createGroup("dori", cwd) : groupId(d.store.root));
-  const kickoff = `Read your brief at ${briefPath} and execute it. Your lane key is ${key}.`;
+  // An omo session may run on another device, where this home's brief file does not exist: it gets the brief inline.
+  const kickoff =
+    rt.kind === "omo"
+      ? `Your lane key is ${key}. Execute this brief:\n\n${briefText}`
+      : `Read your brief at ${briefPath} and execute it. Your lane key is ${key}.`;
   const ref = await openSession(
     rt,
     { name: key, role: "lane", container: "tab", cwd, env: { DORI_LANE: key, DORI_HOME: d.store.root }, group },

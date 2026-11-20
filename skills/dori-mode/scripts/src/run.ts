@@ -1,5 +1,6 @@
 import type { Exec } from "../../../../src/runtime/exec.ts";
 import { HcRuntime } from "../../../../src/runtime/hc/index.ts";
+import { OmoRuntime } from "../../../../src/runtime/omo/index.ts";
 import { HerdrRuntime } from "../../../../src/runtime/herdr/index.ts";
 import { Runtimes } from "../../../../src/runtime/registry.ts";
 import { type RuntimeChoice, readRuntimeChoice } from "../../../../src/runtime/select.ts";
@@ -91,6 +92,7 @@ export const runtimesFor = (
   const make: Record<RuntimeKind, () => SessionRuntime> = {
     herdr: () => new HerdrRuntime(exec, env["DORI_HERDR_SESSION"], { env, sleep: clock.sleep }),
     hc: () => new HcRuntime(exec, { env, sleep: clock.sleep }),
+    omo: () => new OmoRuntime(exec, { env }),
   };
   return new ChosenRuntimes(
     () => runtimeChoice(config, env),

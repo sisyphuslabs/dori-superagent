@@ -1,4 +1,4 @@
-export type RuntimeKind = "herdr" | "hc";
+export type RuntimeKind = "herdr" | "hc" | "omo";
 /** One session as its runtime addresses it. `group`: the herdr workspace id or the hc dori.group label. `container`: the herdr tab id (absent on hc). */
 export type SessionRef = {
   readonly runtime: RuntimeKind;
@@ -88,7 +88,9 @@ const BARE_HERDR = /^w[0-9A-Za-z]+:p[0-9A-Za-z]+$/;
  * `t1b`, `t2h`). Another machine's `<machine>/<address>` is not a ref: the id names the session's inbox file.
  */
 const HC_ADDRESS = /^t[0-9a-z]+$/;
-const ID_SHAPES: Readonly<Record<RuntimeKind, RegExp>> = { herdr: BARE_HERDR, hc: HC_ADDRESS };
+/** An omo session on any device of the account: `<device>/<session>`. */
+const OMO_SESSION = /^[0-9A-Za-z][0-9A-Za-z._-]*\/[0-9A-Za-z][0-9A-Za-z._-]*$/;
+const ID_SHAPES: Readonly<Record<RuntimeKind, RegExp>> = { herdr: BARE_HERDR, hc: HC_ADDRESS, omo: OMO_SESSION };
 const KINDS = Object.keys(ID_SHAPES) as RuntimeKind[];
 
 /** "herdr:w1:p3", "hc:t7", bare "w1:p3" (herdr). A bare "t7" is NOT a ref (it is a legal lane key); undefined otherwise. */
