@@ -58,7 +58,10 @@ const USAGE = `dori <command> [options]
   inbound slack|telegram [--loop MIN]  print INBOUND lines: Slack unread thread replies / Telegram owner DMs, edits and media + configured topic
                                        the Dori posted in (any helper), DMs and channels with unread mentions
   inbound gateway [--session ID] [--session-file PATH]
-                                       subscribe as the lead session (default PI_SESSION_ID, PI_SESSION_FILE); print INBOUND lines, ack each`;
+                                       subscribe as the lead session (default PI_SESSION_ID, PI_SESSION_FILE); print INBOUND lines, ack each
+  inbound gateway --engine --session-file PATH [--cwd DIR]
+                                       hand each inbound to that session on the engine host (SENPI_RPC_SOCKET,
+                                       OMO_CODING_AGENT_DIR) and ack it once the engine took it`;
 
 const config = await loadConfig().catch((e: unknown) =>
   e instanceof ConfigError ? die(e.message) : Promise.reject(e),
@@ -110,6 +113,7 @@ const flags = parseArgs({
     line: { type: "string", multiple: true },
     session: { type: "string" },
     "session-file": { type: "string" },
+    engine: { type: "boolean" },
   },
 });
 

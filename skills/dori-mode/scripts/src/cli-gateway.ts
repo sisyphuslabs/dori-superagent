@@ -1,6 +1,7 @@
 /** dori send gateway and dori inbound gateway: the dori.bot surface over the gateway's local socket. */
 import type { Cli } from "./cli-context.ts";
 import { die } from "./cli-context.ts";
+import { EngineLead, unixEngine } from "./messenger/engine.ts";
 import { Gateway, gatewaySocketPath, unixConnector } from "./messenger/gateway.ts";
 import type { InboundFrame, StatusPhase, WorkRow } from "./messenger/gateway-frames.ts";
 import { realClock } from "./run.ts";
@@ -58,7 +59,29 @@ export const formatGatewayInbound = (sessionId: string, i: InboundFrame): string
     ? `INBOUND gateway ${sessionId} - ${i.id} - ${JSON.stringify(i.text.slice(0, 200))}`
     : `INBOUND gateway:answer ${sessionId} ${i.question_id} ${i.id} - ${JSON.stringify((i.text ?? "").slice(0, 200))}${i.option_id ? ` option=${i.option_id}` : ""}`;
 
+/**
+ * `--engine`: no agent session reads stdout, so each inbound goes to the Dori's main session on the engine host
+ * (SENPI_RPC_SOCKET, OMO_CODING_AGENT_DIR) and is acked only once the engine has taken it.
+ */
+const inboundToEngine = async (cli: Cli): Promise<void> => {
+  const socket = process.env["SENPI_RPC_SOCKET"] || die("inbound gateway --engine needs SENPI_RPC_SOCKET");
+  const agentDir = process.env["OMO_CODING_AGENT_DIR"] || die("inbound gateway --engine needs OMO_CODING_AGENT_DIR");
+  const file = cli.opt("session-file") || die("inbound gateway --engine needs --session-file");
+  if (!file.startsWith("/")) die("--session-file must be an absolute path");
+  const lead = new EngineLead(unixEngine(socket, agentDir), file, cli.opt("cwd") || process.cwd());
+  const session = await lead.session();
+  console.log("INBOUND_READY gateway engine");
+  await gateway(cli).subscribe(session, async (_, inbound) => {
+    await lead.hand(inbound).catch((error: unknown) => {
+      console.error(`INBOUND_NOT_HANDED gateway ${inbound.seq} ${error instanceof Error ? error.message : "failed"}`);
+      throw error;
+    });
+    console.log(`INBOUND_HANDED gateway ${inbound.seq}`);
+  });
+};
+
 export const inboundGateway = async (cli: Cli): Promise<void> => {
+  if (cli.values["engine"]) return await inboundToEngine(cli);
   const id =
     cli.opt("session") || process.env["PI_SESSION_ID"] || die("inbound gateway needs --session or PI_SESSION_ID");
   const path =

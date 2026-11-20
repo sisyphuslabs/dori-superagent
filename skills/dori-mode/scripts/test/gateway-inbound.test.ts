@@ -78,6 +78,33 @@ test("after a dropped connection the session is announced again and a resent seq
   expect(clock.slept.length).toBeGreaterThan(0);
 });
 
+test("a hand-off the lead could not make is not acked: the connection is reopened and the same seq handed again", async () => {
+  // Given a gateway that hands seq 1 on every connection, and a lead whose first hand-off fails.
+  const gw = memoryGateway(
+    (frame, peer) => {
+      if (frame["op"] !== "subscribe") return;
+      peer.reply({ op: "result", re: "subscribe", code: "ok" });
+      peer.reply(message(1, "hello"));
+      if (peer.connection === 2) peer.drop();
+    },
+    (attempt) => attempt > 2,
+  );
+  const tried: number[] = [];
+  const lead = (_: string, inbound: InboundFrame) => {
+    tried.push(inbound.seq);
+    if (tried.length === 1) throw new Error("engine refused the follow_up");
+  };
+  // When the Dori subscribes until the gateway is gone.
+  const clock = recordingClock();
+  const done = new Gateway(gw.connector, clock, "/sock").subscribe(ANNOUNCED, lead);
+  await expect(done).rejects.toThrow("gateway_unavailable");
+  // Then seq 1 was tried twice, acked only once (after the hand-off that worked), and the retry waited.
+  expect(tried).toEqual([1, 1]);
+  expect(gw.received.filter((f) => f["op"] === "subscribe")).toHaveLength(2);
+  expect(gw.received.filter((f) => f["op"] === "ack").map((f) => f["seq"])).toEqual([1]);
+  expect(clock.slept.length).toBeGreaterThan(0);
+});
+
 test("an inbound line keeps the other messengers' field order", () => {
   const answer = { ...message(2, "x"), kind: "answer", question_id: "op-6", option_id: "o1" } as InboundFrame;
   expect(formatGatewayInbound(SESSION, message(1, "hi there") as InboundFrame)).toBe(

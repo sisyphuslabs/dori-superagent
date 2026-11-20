@@ -145,8 +145,9 @@ export class Gateway {
    * The long-lived inbound stream: announce the lead session, hand each message or answer to the lead, then ack it.
    * A dropped connection is reopened with backoff and the session announced again; the gateway resends what was not
    * acked, and a `seq` already handed over is acked again without a second hand-off (`seq` is the row's position in
-   * the conversation's stored log, so it only grows, also across a gateway restart). Ends with gateway_unavailable
-   * after `policy.attempts` failed connections in a row.
+   * the conversation's stored log, so it only grows, also across a gateway restart). A hand-off the lead throws on is
+   * not acked: the connection is closed and reopened with backoff, so the gateway hands it again. Ends with
+   * gateway_unavailable after `policy.attempts` failed connections in a row.
    */
   async subscribe(session: AnnouncedSession, lead: LeadPort): Promise<never> {
     let handed = 0;
@@ -168,7 +169,13 @@ export class Gateway {
               else throw new MessengerError(`gateway refused the subscription: ${frame.code}`, 0, frame.code);
             if (frame?.op !== "inbound") continue;
             if (frame.seq > handed) {
-              await lead(session.id, frame);
+              const taken = await Promise.resolve()
+                .then(() => lead(session.id, frame))
+                .then(
+                  () => true,
+                  () => false,
+                );
+              if (!taken) break;
               handed = frame.seq;
             }
             conn.write(JSON.stringify({ op: "ack", seq: frame.seq } satisfies DoriToGatewayFrame));
