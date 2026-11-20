@@ -1,7 +1,8 @@
 /** dori send gateway and dori inbound gateway: the dori.bot surface over the gateway's local socket. */
 import type { Cli } from "./cli-context.ts";
 import { die } from "./cli-context.ts";
-import { EngineLead, handToEngine, unixEngine } from "./messenger/engine.ts";
+import { EngineLead, handToEngine } from "./messenger/engine.ts";
+import { unixEngine } from "./messenger/engine-link.ts";
 import { Gateway, gatewaySocketPath, unixConnector } from "./messenger/gateway.ts";
 import type { InboundFrame, StatusPhase, WorkRow } from "./messenger/gateway-frames.ts";
 import { realClock } from "./run.ts";

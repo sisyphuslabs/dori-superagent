@@ -3,7 +3,8 @@ import { constants, type Stats } from "node:fs";
 import { lstat, open } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { EngineLink } from "./engine.ts";
+import type { EngineLink } from "./engine-link.ts";
+import { field, isRecord, text } from "./fields.ts";
 import { MessengerError } from "./http.ts";
 
 const HEX_32 = /^[0-9a-f]{64}$/;
@@ -14,8 +15,6 @@ const MAX_RECORD_BYTES = 4096;
 const refused = (reason: string) => new MessengerError(`engine ${reason}`, 0, "engine_unavailable");
 const ownedBy = (stat: Stats, uid: number) => stat.uid === uid;
 const ownUid = (): number => process.getuid?.() ?? -1;
-const isRecord = (v: unknown): v is Readonly<Record<string, unknown>> =>
-  typeof v === "object" && v !== null && !Array.isArray(v);
 
 /** The engine socket must be this user's own and closed to everyone else before a byte goes to it. */
 export const checkEngineSocket = async (path: string): Promise<void> => {
@@ -63,9 +62,6 @@ const readHostKey = async (agentDir: string, launchId: string): Promise<Buffer> 
     await handle.close();
   }
 };
-
-const text = (v: unknown): string | undefined => (typeof v === "string" && v !== "" ? v : undefined);
-const field = (v: unknown, name: string): unknown => (isRecord(v) ? v[name] : undefined);
 
 /**
  * Proves both sides with the key record the engine wrote for this launch: the host first, so nothing but a nonce

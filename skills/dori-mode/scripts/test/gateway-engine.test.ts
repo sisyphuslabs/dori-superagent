@@ -2,7 +2,8 @@ import { afterEach, expect, test } from "bun:test";
 import { chmod, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { EngineLead, handToEngine, unixEngine } from "../src/messenger/engine.ts";
+import { EngineLead, handToEngine } from "../src/messenger/engine.ts";
+import { unixEngine } from "../src/messenger/engine-link.ts";
 import type { InboundFrame } from "../src/messenger/gateway-frames.ts";
 import { type EngineAnswer, firedDeadlines, startFakeEngine } from "./engine-fakes.ts";
 
