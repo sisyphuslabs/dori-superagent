@@ -25,6 +25,55 @@ export async function headSha(d: Deps, pr: PrRef): Promise<string> {
   return String(out.headRefOid);
 }
 
+type Verdict = "CLEAR" | "BLOCK";
+type VerdictScan = { kind: "none" } | { kind: "verdict"; verdict: Verdict } | { kind: "ambiguous"; values: Verdict[] };
+
+/** The original contract: a column-zero line, trailing rationale allowed (`VERDICT: CLEAR — 4 LOW findings`). */
+const PLAIN_VERDICT = /^VERDICT:\s*(CLEAR|BLOCK)(?![A-Za-z0-9])(?![_-][A-Za-z0-9])/;
+
+/** The incident's shape: nothing but the verdict once markdown emphasis and backticks are removed. */
+const EMPHASISED_VERDICT = /^VERDICT\s*:\s*(CLEAR|BLOCK)$/;
+
+/** A bullet, list, or blockquote marker never introduces a verdict, even when its mark could pass as emphasis. */
+const MARKER = /^\s*(?:[-+]|\*|\d+[.)]|>)\s/;
+
+/**
+ * Two compatible shapes: the original column-zero `VERDICT: CLEAR|BLOCK` line (trailing rationale included), and a
+ * whole line that is only that verdict wrapped in markdown emphasis or backticks. Indented lines, bullets, blockquotes
+ * and fenced examples never count. Plain lines keep legacy last-match; plain and emphasised lines that disagree are
+ * ambiguous and write no receipt.
+ */
+function scanVerdicts(stdout: string): VerdictScan {
+  const plain: Verdict[] = [];
+  const emphasised: Verdict[] = [];
+  let fence: string | undefined;
+  for (const raw of stdout.split(/\r?\n/)) {
+    const mark = /^\s*(`{3,}|~{3,})/.exec(raw)?.[1];
+    if (mark) {
+      // A fence closes only on the same marker character with at least the opening run's length.
+      if (fence === undefined) fence = mark;
+      else if (mark[0] === fence[0] && mark.length >= fence.length) fence = undefined;
+      continue;
+    }
+    if (fence !== undefined || MARKER.test(raw) || /^\s/.test(raw)) continue;
+    const p = PLAIN_VERDICT.exec(raw);
+    if (p) {
+      plain.push(p[1] as Verdict);
+      continue;
+    }
+    const e = EMPHASISED_VERDICT.exec(raw.replace(/[`*_]/g, "").trim());
+    if (e && /[`*_]/.test(raw)) emphasised.push(e[1] as Verdict);
+  }
+  if (plain.length === 0 && emphasised.length === 0) return { kind: "none" };
+  if (emphasised.length === 0) return { kind: "verdict", verdict: plain.at(-1)! };
+  if (plain.length === 0) {
+    const values = [...new Set(emphasised)];
+    return values.length === 1 ? { kind: "verdict", verdict: values[0]! } : { kind: "ambiguous", values };
+  }
+  const values = [...new Set([...plain, ...emphasised])];
+  return values.length === 1 ? { kind: "verdict", verdict: values[0]! } : { kind: "ambiguous", values };
+}
+
 /** Runs a fresh, non-interactive reviewer session pinned to the PR head and records its verdict as a receipt. */
 export async function review(
   d: Deps,
@@ -41,20 +90,20 @@ export async function review(
     ? substitute(hook, { ...vars, text })
     : [d.agentCmd, "-p", "--no-session", ...(model ? ["--model", model] : []), text];
   const res = await d.exec(cmd ?? d.agentCmd, argv);
-  const verdicts = [...res.stdout.matchAll(/^VERDICT:\s*(CLEAR|BLOCK)\b/gm)];
-  const last = verdicts.at(-1);
-  if (!last) {
+  const scan = scanVerdicts(res.stdout);
+  if (res.code !== 0 || scan.kind !== "verdict") {
     const name = `${pr.id.replaceAll("/", "__").replace("#", "_")}@${sha}-${randomUUID()}.noverdict.txt`;
     const diagnostic = join(d.store.root, "receipts", name);
     writeFileSync(diagnostic, res.stdout.split(/\r?\n/).slice(-200).join("\n"), { flag: "wx", mode: 0o600 });
     const reason =
-      res.code === 0
-        ? "reviewer printed no VERDICT line"
-        : `reviewer exited ${res.code}: ${res.stderr.trim() || "no VERDICT line in its output"}`;
+      res.code !== 0
+        ? `reviewer exited ${res.code}${res.stderr.trim() ? `: ${res.stderr.trim()}` : ""}`
+        : scan.kind === "ambiguous"
+          ? `reviewer printed conflicting verdicts (${scan.values.join(" and ")})`
+          : "reviewer printed no VERDICT line";
     throw new Error(`${reason}; no receipt written; reviewer output saved to ${diagnostic}`);
   }
-  if (res.code !== 0) throw new Error(`reviewer exited ${res.code}: ${res.stderr.trim()}`);
-  const verdict = last[1] as "CLEAR" | "BLOCK";
+  const verdict = scan.verdict;
   d.store.saveReceipt({
     pr: pr.id,
     sha,

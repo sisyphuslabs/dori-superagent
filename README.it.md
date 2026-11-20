@@ -170,13 +170,13 @@ Una lane che non fa rapporto da 10 minuti, e il cui pane non sta lavorando, rice
 
 ### Il merge richiede una receipt CLEAR sull'head esatto e check verdi
 
-`dori merge` legge con `gh` lo SHA di head della PR, poi richiede in `~/.dori/receipts/` una receipt per quello SHA con verdetto `CLEAR`. Solo `dori review` scrive receipt: lancia un omo nuovo e non interattivo su `prompts/review.md`, fissato a quello SHA, e quando il reviewer non stampa una riga `VERDICT:` non viene scritta nessuna receipt.
+`dori merge` legge con `gh` lo SHA di head della PR, poi richiede in `~/.dori/receipts/` una receipt per quello SHA con verdetto `CLEAR`. Solo `dori review` scrive receipt: lancia un omo nuovo e non interattivo su `prompts/review.md`, fissato a quello SHA, e quando il reviewer non stampa una riga `VERDICT: CLEAR` o `VERDICT: BLOCK` che inizia a colonna zero (un breve motivo dopo il valore è ammesso) né la stessa riga interamente avvolta in enfasi markdown o backtick, non viene scritta nessuna receipt. Indentazione, punti elenco, citazioni ed esempi in blocchi di codice non contano; se una riga semplice e una enfatizzata sono in conflitto, non viene scritta nessuna receipt.
 
 Poi `gh pr checks` deve restituire almeno un check, ogni check deve essere `pass` o `skipping`, e almeno uno deve essere `pass`. Una lista di check vuota viene rifiutata con "an empty check list is never green". Un push dopo la review cambia lo SHA di head, quindi la receipt non corrisponde più e `dori review` va rilanciato.
 
 ### Hook per i tuoi strumenti
 
-`$DORI_HOME/config.json` può indicare template di argv sotto `hooks`: `onReady`, `onReport` e `onLost` girano in background quando avvengono quegli eventi (con `{key}`, `{text}` e `{evidence}` compilati argomento per argomento), e `reviewCommand` sostituisce il reviewer integrato purché stampi la stessa riga `VERDICT:`. `DORI_PROMPTS_DIR` indica all'harness le tue copie dei prompt.
+`$DORI_HOME/config.json` può indicare template di argv sotto `hooks`: `onReady`, `onReport` e `onLost` girano in background quando avvengono quegli eventi (con `{key}`, `{text}` e `{evidence}` compilati argomento per argomento), e `reviewCommand` sostituisce il reviewer integrato purché stampi la stessa riga a colonna zero `VERDICT: CLEAR` o `VERDICT: BLOCK` (motivo dopo il valore ammesso) o la riga intera enfatizzata. `DORI_PROMPTS_DIR` indica all'harness le tue copie dei prompt.
 
 ## Dori mode in dettaglio
 

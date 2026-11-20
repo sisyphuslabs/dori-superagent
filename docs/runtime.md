@@ -148,7 +148,7 @@ The two loops are plain processes with no inbox and no agent, so they skip steps
 }
 ```
 
-`onReady` runs on `dori ready`, `onReport` on `dori report`, and `onLost` when the duty loop finds a lane whose session vanished. `{key}`, `{text}` and `{evidence}` are replaced inside each element. Hooks run in the background, and a failing hook is one stderr line; it never fails the command. `reviewCommand` replaces the built-in reviewer in `dori review`, gets `{pr}`, `{repo}`, `{number}`, `{sha}` and `{text}` (the rendered review prompt), and must print a `VERDICT: CLEAR` or `VERDICT: BLOCK` line. `DORI_PROMPTS_DIR` points Dori at another directory of prompt files in place of the repo's `prompts/`.
+`onReady` runs on `dori ready`, `onReport` on `dori report`, and `onLost` when the duty loop finds a lane whose session vanished. `{key}`, `{text}` and `{evidence}` are replaced inside each element. Hooks run in the background, and a failing hook is one stderr line; it never fails the command. `reviewCommand` replaces the built-in reviewer in `dori review`, gets `{pr}`, `{repo}`, `{number}`, `{sha}` and `{text}` (the rendered review prompt), and must print `VERDICT: CLEAR` or `VERDICT: BLOCK` as a column-zero line of its own (a trailing reason is allowed), or that exact line wrapped in markdown emphasis or backticks. Indented lines, bullet or list markers, blockquotes and fenced examples never count, and a plain and an emphasised verdict that disagree write no receipt. `DORI_PROMPTS_DIR` points Dori at another directory of prompt files in place of the repo's `prompts/`.
 
 ## Limits
 
