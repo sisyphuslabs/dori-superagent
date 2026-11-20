@@ -17,6 +17,7 @@ const USAGE = `dori <command> [options]
   launch <key> --title T --brief FILE --done "merged o/r#N; closed o/r#M" [--thread REF] [--model M] [--cwd DIR]
          [--wall-minutes N|none] [--token-limit N|none] [--cost-limit N|none] [--activity-path FILE ...] [--dry-run]
   adopt  <key> --pane ID --title T --brief FILE --done "..." [--thread REF]
+  attach <key> [--print]               watch an omo-host lane: an hc terminal running omo's attached TUI client (--print: the command only)
   sync   [--write]                     registry vs live panes; read-only unless --write
   boot                                 read-only check after a restart: Slack auth, vanished panes, journals, open worklog items, stale watches
   report <key> --kind milestone|blocker|question|halted|done --text TEXT
@@ -98,6 +99,7 @@ const flags = parseArgs({
     outcome: { type: "string" },
     lesson: { type: "string" },
     "dry-run": { type: "boolean" },
+    print: { type: "boolean" },
     global: { type: "boolean" },
     source: { type: "string" },
     open: { type: "boolean" },

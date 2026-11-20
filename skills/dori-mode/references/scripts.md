@@ -21,6 +21,7 @@ Needs: bun 1.3+, herdr or hc, git, and the GitHub CLI (`gh`) for `merged`/`close
 | Field | Default | Used by |
 |---|---|---|
 | `runtime` | detected | every command that opens or reads a session: `"herdr"` or `"hc"`. Unset, the Dori picks hc inside an hc terminal (`HC_TERMINAL_ID`), herdr inside a herdr pane (`HERDR_PANE_ID`), else hc when it is on PATH, else herdr, and refuses only when neither is there. Lanes already open stay on the runtime that opened them |
+| `laneRuntime` | `runtime` | `launch`: where new lanes open, `"herdr"`, `"hc"` or `"omo-host"`. `omo-host` opens each lane as a session of omo's shared engine host (one process per machine, a few MB per idle lane) instead of a TUI omo in a terminal; the lead stays on `runtime`, which never takes `omo-host`. Such a lane has no terminal: `dori attach` opens a view, and its env (`DORI_CONFIG`, the token-file variables) rides in the dori commands its footer names |
 | `stateDir` | `~/.dori/state` | registry, heavy slots |
 | `laneWorkspace` | current workspace | `launch`: the herdr workspace, or on hc the `dori.group` label (default `dori`) |
 | `workspaces` | all | `sync`, `dead-panes`: herdr workspaces, or `dori.group` labels on hc |
@@ -75,6 +76,10 @@ The lane never gets the Slack token itself: on hc every env value is a command-l
 
 ### `dori adopt <key> --pane ID --title T --brief FILE --done "..." [--thread REF]`
 Registers a lane that is already running. A `--pane` id without a runtime prefix (`hc:`, `herdr:`) or the herdr `w1:p3` shape is recorded on the runtime new lanes open on, the one `dori boot` prints as `RUNTIME`.
+
+### `dori attach <key> [--print]`
+
+A view of an `omo-host` lane: an hc terminal (labelled `dori.view=<key>`, removed when the client quits) running omo's TUI client attached to the lane's host session, `omo --attach unix://<socket> --session <id>`. Quitting the client leaves the lane running. `--print` prints that command instead, for any terminal. Refused for a lane on herdr or hc, whose own pane is the view. While a view is attached the host keeps the session: `close` stops its turn and its receipt says `not closed`; quit the view, then `omo host session close <id>`. A view whose client exits on its own (the host re-opened the session under a new handle) is simply attached again.
 
 ### `dori sync [--write]`
 Prints `key | thread | pane | session | status` for every open lane and every unregistered agent pane, followed by drift. Read-only unless `--write`, which stores session ids.

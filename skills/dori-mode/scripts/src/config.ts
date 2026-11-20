@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import type { RuntimeKind } from "../../../../src/runtime/types.ts";
+import type { RuntimeKind, TerminalKind } from "../../../../src/runtime/types.ts";
 import type { SupervisionOptions } from "./supervision-observe.ts";
 import type { CommitIdentity } from "./verify-pr-check.ts";
 
@@ -23,7 +23,9 @@ export type GuardThresholds = {
 
 export type DoriConfig = {
   /** Where new sessions open; absent = detected (see run.ts runtimeChoice). */
-  readonly runtime?: RuntimeKind;
+  readonly runtime?: TerminalKind;
+  /** Where new lanes open; absent = the same runtime as `runtime`. `omo-host` runs each lane inside omo's shared host. */
+  readonly laneRuntime?: RuntimeKind;
   readonly stateDir: string;
   readonly laneWorkspace: string;
   readonly workspaces: readonly string[];
@@ -111,11 +113,12 @@ const repoIdentities = (value: unknown): Record<string, CommitIdentity> =>
 
 export class ConfigError extends Error {}
 
-const RUNTIMES: Readonly<Record<RuntimeKind, true>> = { herdr: true, hc: true };
-const checkRuntime = (value: unknown): void => {
-  if (value !== undefined && !(typeof value === "string" && Object.hasOwn(RUNTIMES, value)))
+const RUNTIMES: Readonly<Record<TerminalKind, true>> = { herdr: true, hc: true };
+const LANE_RUNTIMES: Readonly<Record<RuntimeKind, true>> = { ...RUNTIMES, "omo-host": true };
+const checkRuntime = (name: string, value: unknown, allowed: Readonly<Record<string, true>>): void => {
+  if (value !== undefined && !(typeof value === "string" && Object.hasOwn(allowed, value)))
     throw new ConfigError(
-      `invalid runtime: expected ${Object.keys(RUNTIMES)
+      `invalid ${name}: expected ${Object.keys(allowed)
         .map((k) => JSON.stringify(k))
         .join(" or ")}, got ${JSON.stringify(value)}`,
     );
@@ -175,7 +178,8 @@ export const loadConfig = async (path = configPath(), home = homedir()): Promise
   const base = defaultConfig(home);
   const file = Bun.file(path);
   const raw = (await file.exists()) ? ((await file.json()) as Partial<DoriConfig>) : {};
-  checkRuntime(raw.runtime);
+  checkRuntime("runtime", raw.runtime, RUNTIMES);
+  checkRuntime("laneRuntime", raw.laneRuntime, LANE_RUNTIMES);
   checkSupervision(raw.supervision);
   const merged: DoriConfig = {
     ...base,

@@ -150,6 +150,23 @@ The two loops are plain processes with no inbox and no agent, so they skip steps
 
 `onReady` runs on `dori ready`, `onReport` on `dori report`, and `onLost` when the duty loop finds a lane whose session vanished. `{key}`, `{text}` and `{evidence}` are replaced inside each element. Hooks run in the background, and a failing hook is one stderr line; it never fails the command. `reviewCommand` replaces the built-in reviewer in `dori review`, gets `{pr}`, `{repo}`, `{number}`, `{sha}` and `{text}` (the rendered review prompt), and must print a `VERDICT: CLEAR` or `VERDICT: BLOCK` line. `DORI_PROMPTS_DIR` points Dori at another directory of prompt files in place of the repo's `prompts/`.
 
+## Lanes in omo's shared host (`omo-host`)
+
+`"laneRuntime": "omo-host"` in the dori-mode config opens new lanes as sessions of omo's shared engine host instead of a TUI omo per terminal; the lead, duty and loops stay on `runtime` (herdr or hc), which never takes `omo-host`. One host process serves every lane on the machine (about 250 MB once, then a few MB per idle session, against 115-380 MB per TUI omo). The adapter, `src/runtime/omo-host/`, calls the `omo host session` CLI, one `--json` call per step:
+
+| Interface | omo-host |
+|---|---|
+| `create` | `open --cwd <cwd> --model <model> --name dori/<group>/<lane>`; the ref id is the durable session id (it survives a park and a host restart). An env is refused: the session runs in the host's environment |
+| `start` | `prompt <id> <first prompt>` (not a shell command; see `AGENT_SESSION_KINDS`) |
+| `list` | `list` (observe-only), `activity` running/idle as working/idle; a group is the middle part of the name |
+| `probe` | `state <id>` (which resumes a parked session): a turn or compaction is `working`, else `idle`, an open question too, because in a host session the agent takes the answer as its next prompt; unknown is `gone`. The goal status comes from omo's goal record next to the session file |
+| `read` | `read <id> --tail N` rendered as pane lines (user `> ...`, agent text, `• tool args`, tool output, `Error: ...`) plus a footer: an open question as `? <title> [options]`, `Working (<time>)` or `❯`, and `Pursuing goal` / `Goal paused`. A session the host does not list reads empty: reading never resumes it, since the host resumes a closed session like a parked one |
+| `deliver` | idle: `prompt` (a turn started meanwhile is refused `busy`: not-ready, or under `any` a `steer`); working: `steer`. A steer that lands after the turn ended is parked until the next prompt and reported ambiguous |
+| `keys` | Escape is `abort`; Enter does nothing |
+| `close` | `close <id>`. The host never closes a session another client (a view) still holds: the turn is aborted and the close fails, so the lane's receipt says `not closed`; quit the view, then `omo host session close <id>` |
+
+A lane's own `dori` calls find it by `PI_SESSION_ID` (inside a host session, ahead of any inherited `HC_TERMINAL_ID`). `pause`/`resume` read the goal record back instead of the screen, which a host session does not have. `dori attach <key>` opens an hc terminal running `omo --attach unix://<socket> --session <id>`.
+
 ## Limits
 
 - No remote sessions. hc can run terminals on other machines (`--on`), and Dori does not use it: every session is on the local core, and `dori` ignores terminals mirrored from other machines.
