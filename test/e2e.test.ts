@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { shq } from "../src/delivery.ts";
@@ -49,10 +49,12 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  if (!herdrBin) return;
-  await spawnExec("herdr", ["--session", session, "server", "stop"]);
-  await server?.exited;
-  await spawnExec("herdr", ["session", "delete", session]);
+  if (herdrBin) {
+    await spawnExec("herdr", ["--session", session, "server", "stop"]);
+    await server?.exited;
+    await spawnExec("herdr", ["session", "delete", session]);
+  }
+  rmSync(home, { recursive: true, force: true });
 });
 
 test.skipIf(!herdrBin)(

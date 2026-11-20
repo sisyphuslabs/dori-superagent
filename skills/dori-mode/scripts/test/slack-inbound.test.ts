@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { join } from "node:path";
 
 import type { Http, HttpRequest, HttpResponse } from "../src/messenger/http.ts";
@@ -9,7 +9,7 @@ import { fakeClock, withState } from "./fakes.ts";
 
 const SELF = "U_DORI";
 const state = withState();
-afterEach(() => {});
+afterAll(() => state.done());
 
 type Workspace = {
   replies: Record<string, { ts: string; user?: string; text: string; bot_id?: string }[]>;

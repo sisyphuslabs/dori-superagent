@@ -1,6 +1,3 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { Deps } from "../src/harness.ts";
 import type { Exec } from "../src/runtime/exec.ts";
 import { HcRuntime } from "../src/runtime/hc/index.ts";
@@ -10,6 +7,7 @@ import type { AgentStatus, RuntimeKind, SessionRef } from "../src/runtime/types.
 import { Store, type HostLoad } from "../src/store.ts";
 import type { DutyCounts, TelemetryEvent, Usage } from "../src/telemetry.ts";
 import { FakeHc } from "./fake-hc.ts";
+import { tempDir } from "./temp.ts";
 
 /** A herdr pane ref, the form every herdr-world test addresses sessions by. */
 export const href = (id: string): SessionRef => ({ runtime: "herdr", id });
@@ -170,7 +168,7 @@ export class World {
     const kind = opts.runtime ?? "herdr";
     const quiet = { env: {}, sleep: async () => {} };
     return {
-      store: new Store(mkdtempSync(join(tmpdir(), "dori-test-"))),
+      store: new Store(tempDir("dori-test-")),
       runtimes: new Runtimes(kind, (k) =>
         k === "hc" ? new HcRuntime(this.exec, { ...quiet, log: () => {} }) : new HerdrRuntime(this.exec, "", quiet),
       ),

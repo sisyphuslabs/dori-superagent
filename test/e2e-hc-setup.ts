@@ -10,6 +10,7 @@ export const session = `e2e-${process.pid}`;
 // The core's sockets land under <root>/r/herdr-core/, so the root stays short: os.tmpdir() is used only while every
 // socket hc creates fits; a long TMPDIR (some CI runners) falls back to /tmp.
 const root = mkdtempSync(join(socketRootBase(tmpdir(), session), "dhc-"));
+export const removeRoot = () => rmSync(root, { recursive: true, force: true });
 const [state, run, config] = [join(root, "s"), join(root, "r"), join(root, "c")];
 const cli = resolve(import.meta.dir, "../src/cli.ts");
 export const fixture = resolve(import.meta.dir, "fixtures/fake-agent-7501.sh");

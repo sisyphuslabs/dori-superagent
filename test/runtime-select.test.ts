@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ConfigError, RuntimeChoiceError, readRuntimeChoice } from "../src/runtime/select.ts";
+import { tempDir } from "./temp.ts";
 
-const scratch = (): string => mkdtempSync(join(tmpdir(), "dori-select-"));
+const scratch = (): string => tempDir("dori-select-");
 
 const config = (text: string): string => {
   const path = join(scratch(), "config.json");

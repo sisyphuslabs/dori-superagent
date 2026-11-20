@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Telemetry, telemetryEnabled } from "../src/telemetry.ts";
 import { VERSION } from "../src/telemetry-otlp.ts";
+import { tempDir } from "./temp.ts";
 
 type Sent = { url: string; body: string; headers: Record<string, string> };
 
@@ -13,7 +13,7 @@ function rig(
   registerStatus: () => number = () => 200,
   logsText: () => string = () => "",
 ) {
-  const home = mkdtempSync(join(tmpdir(), "dori-tel-"));
+  const home = tempDir("dori-tel-");
   const sent: Sent[] = [];
   const notices: string[] = [];
   let clock = Date.parse("2026-11-02T10:00:00Z");
@@ -160,7 +160,7 @@ describe("telemetry", () => {
   });
 
   test("an unreachable collector or a refused registration never throws and sends no logs", async () => {
-    const home = mkdtempSync(join(tmpdir(), "dori-tel-"));
+    const home = tempDir("dori-tel-");
     const offline = new Telemetry(
       home,
       {},

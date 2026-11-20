@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, symlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { spawnExec, ToolError } from "../src/runtime/exec.ts";
 import { groupId } from "../src/runtime/group.ts";
+import { tempDir } from "./temp.ts";
 
 describe("groupId", () => {
   test("is 8 lowercase hex chars and stable for one store root", () => {
@@ -20,9 +20,12 @@ describe("groupId", () => {
   });
 
   test("a symlinked store root shares the target's group", () => {
-    const dir = mkdtempSync(join(tmpdir(), "dori-group-"));
-    symlinkSync(dir, `${dir}-link`);
-    expect(groupId(`${dir}-link`)).toBe(groupId(dir));
+    const root = tempDir("dori-group-");
+    const dir = join(root, "dir");
+    const link = join(root, "link");
+    mkdirSync(dir);
+    symlinkSync(dir, link);
+    expect(groupId(link)).toBe(groupId(dir));
   });
 });
 
