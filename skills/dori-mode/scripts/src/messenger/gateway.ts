@@ -146,8 +146,9 @@ export class Gateway {
    * A dropped connection is reopened with backoff and the session announced again; the gateway resends what was not
    * acked, and a `seq` already handed over is acked again without a second hand-off (`seq` is the row's position in
    * the conversation's stored log, so it only grows, also across a gateway restart). A hand-off the lead throws on is
-   * not acked: the connection is closed and reopened with backoff, so the gateway hands it again. Ends with
-   * gateway_unavailable after `policy.attempts` failed connections in a row.
+   * not acked: it is tried again in place, each wait twice the last up to `policy.maxMs`, for as long as it takes (the
+   * stdout lead never throws, so this only paces the engine lead). Ends with gateway_unavailable after
+   * `policy.attempts` failed connections in a row.
    */
   async subscribe(session: AnnouncedSession, lead: LeadPort): Promise<never> {
     let handed = 0;
@@ -169,13 +170,8 @@ export class Gateway {
               else throw new MessengerError(`gateway refused the subscription: ${frame.code}`, 0, frame.code);
             if (frame?.op !== "inbound") continue;
             if (frame.seq > handed) {
-              const taken = await Promise.resolve()
-                .then(() => lead(session.id, frame))
-                .then(
-                  () => true,
-                  () => false,
-                );
-              if (!taken) break;
+              for (let refusals = 0; !(await this.handed(lead, session.id, frame)); refusals++)
+                await this.clock.sleep(this.backoffMs(refusals));
               handed = frame.seq;
             }
             conn.write(JSON.stringify({ op: "ack", seq: frame.seq } satisfies DoriToGatewayFrame));
@@ -219,6 +215,16 @@ export class Gateway {
       deadline.cancel();
       conn.close();
     }
+  }
+
+  /** Whether the lead took the inbound; a throw means it did not, and it is offered again. */
+  private handed(lead: LeadPort, sessionId: string, frame: InboundFrame): Promise<boolean> {
+    return Promise.resolve()
+      .then(() => lead(sessionId, frame))
+      .then(
+        () => true,
+        () => false,
+      );
   }
 
   private backoffMs(attempt: number): number {

@@ -70,4 +70,4 @@ INBOUND gateway:answer <session> <question id> <id> - <json text> option=<option
 
 Run it as a persistent monitor of the lead session, as with `dori inbound slack`: each line wakes the lead. The rules for this surface are in `rules/dori-bot.md`.
 
-- `dori inbound gateway --engine --session-file PATH` is the VM's form: the host runs it as a service, and it hands each inbound to that session on the engine host instead of printing it, acking only what the engine admitted (`references/scripts.md`).
+- `dori inbound gateway --engine --session-file PATH` is the VM's form. The host runs it as a service, and it hands each inbound to that session on the engine host instead of printing it. It acks only what the engine admitted (`references/scripts.md`). In either form a lead that throws on a row gets no ack, and the row is offered again after a growing wait.

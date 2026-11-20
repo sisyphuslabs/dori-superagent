@@ -1,7 +1,7 @@
 /** dori send gateway and dori inbound gateway: the dori.bot surface over the gateway's local socket. */
 import type { Cli } from "./cli-context.ts";
 import { die } from "./cli-context.ts";
-import { EngineLead, unixEngine } from "./messenger/engine.ts";
+import { EngineLead, handToEngine, unixEngine } from "./messenger/engine.ts";
 import { Gateway, gatewaySocketPath, unixConnector } from "./messenger/gateway.ts";
 import type { InboundFrame, StatusPhase, WorkRow } from "./messenger/gateway-frames.ts";
 import { realClock } from "./run.ts";
@@ -64,20 +64,25 @@ export const formatGatewayInbound = (sessionId: string, i: InboundFrame): string
  * (SENPI_RPC_SOCKET, OMO_CODING_AGENT_DIR) and is acked only once the engine has taken it.
  */
 const inboundToEngine = async (cli: Cli): Promise<void> => {
+  if (cli.opt("session") !== undefined) die("--session is not used with --engine: the engine names the session");
   const socket = process.env["SENPI_RPC_SOCKET"] || die("inbound gateway --engine needs SENPI_RPC_SOCKET");
   const agentDir = process.env["OMO_CODING_AGENT_DIR"] || die("inbound gateway --engine needs OMO_CODING_AGENT_DIR");
-  const file = cli.opt("session-file") || die("inbound gateway --engine needs --session-file");
-  if (!file.startsWith("/")) die("--session-file must be an absolute path");
-  const lead = new EngineLead(unixEngine(socket, agentDir), file, cli.opt("cwd") || process.cwd());
-  const session = await lead.session();
-  console.log("INBOUND_READY gateway engine");
-  await gateway(cli).subscribe(session, async (_, inbound) => {
-    await lead.hand(inbound).catch((error: unknown) => {
-      console.error(`INBOUND_NOT_HANDED gateway ${inbound.seq} ${error instanceof Error ? error.message : "failed"}`);
-      throw error;
-    });
-    console.log(`INBOUND_HANDED gateway ${inbound.seq}`);
+  const sessionFile = cli.opt("session-file") || die("inbound gateway --engine needs --session-file");
+  if (!sessionFile.startsWith("/")) die("--session-file must be an absolute path");
+  const cwd = cli.opt("cwd");
+  const lead = new EngineLead(unixEngine(socket, agentDir), {
+    sessionFile,
+    ...(cwd === undefined ? {} : { cwd }),
+    createIfMissing: cli.values["create-session"] === true,
   });
+  const session = await lead
+    .session()
+    .catch((error: unknown) =>
+      die(`inbound gateway --engine: ${error instanceof Error ? error.message : "engine unavailable"}`),
+    );
+  console.log("INBOUND_READY gateway engine");
+  const report = (line: string) => (line.startsWith("INBOUND_NOT_HANDED") ? console.error(line) : console.log(line));
+  await gateway(cli).subscribe(session, handToEngine(lead, report));
 };
 
 export const inboundGateway = async (cli: Cli): Promise<void> => {

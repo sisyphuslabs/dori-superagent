@@ -78,31 +78,31 @@ test("after a dropped connection the session is announced again and a resent seq
   expect(clock.slept.length).toBeGreaterThan(0);
 });
 
-test("a hand-off the lead could not make is not acked: the connection is reopened and the same seq handed again", async () => {
-  // Given a gateway that hands seq 1 on every connection, and a lead whose first hand-off fails.
+test("a hand-off the lead could not make is not acked: it is tried again in place, each wait longer", async () => {
+  // Given a gateway that hands seq 1 once and closes after the ack, and a lead that fails twice before it takes it.
   const gw = memoryGateway(
     (frame, peer) => {
+      if (frame["op"] === "ack") peer.drop();
       if (frame["op"] !== "subscribe") return;
       peer.reply({ op: "result", re: "subscribe", code: "ok" });
       peer.reply(message(1, "hello"));
-      if (peer.connection === 2) peer.drop();
     },
-    (attempt) => attempt > 2,
+    (attempt) => attempt > 1,
   );
   const tried: number[] = [];
   const lead = (_: string, inbound: InboundFrame) => {
     tried.push(inbound.seq);
-    if (tried.length === 1) throw new Error("engine refused the follow_up");
+    if (tried.length < 3) throw new Error("engine refused the follow_up");
   };
   // When the Dori subscribes until the gateway is gone.
   const clock = recordingClock();
   const done = new Gateway(gw.connector, clock, "/sock").subscribe(ANNOUNCED, lead);
   await expect(done).rejects.toThrow("gateway_unavailable");
-  // Then seq 1 was tried twice, acked only once (after the hand-off that worked), and the retry waited.
-  expect(tried).toEqual([1, 1]);
-  expect(gw.received.filter((f) => f["op"] === "subscribe")).toHaveLength(2);
+  // Then seq 1 was tried three times on the one subscription, each wait doubling, and acked once it was taken.
+  expect(tried).toEqual([1, 1, 1]);
+  expect(gw.received.filter((f) => f["op"] === "subscribe")).toHaveLength(1);
   expect(gw.received.filter((f) => f["op"] === "ack").map((f) => f["seq"])).toEqual([1]);
-  expect(clock.slept.length).toBeGreaterThan(0);
+  expect(clock.slept.slice(0, 2)).toEqual([1_000, 2_000]);
 });
 
 test("an inbound line keeps the other messengers' field order", () => {
