@@ -6,7 +6,7 @@ import type { Exec } from "../src/runtime/exec.ts";
 import { HcRuntime } from "../src/runtime/hc/index.ts";
 import { HerdrRuntime } from "../src/runtime/herdr/index.ts";
 import { Runtimes } from "../src/runtime/registry.ts";
-import type { AgentStatus, RuntimeKind, SessionRef } from "../src/runtime/types.ts";
+import type { AgentStatus, SessionRef, TerminalKind } from "../src/runtime/types.ts";
 import { Store, type HostLoad } from "../src/store.ts";
 import type { DutyCounts, TelemetryEvent, Usage } from "../src/telemetry.ts";
 import { FakeHc } from "./fake-hc.ts";
@@ -166,7 +166,7 @@ export class World {
   };
 
   /** Deps over this world's recorders; `runtime` is the selected one (both are reachable by ref). */
-  deps(opts: { runtime?: RuntimeKind } = {}): Deps {
+  deps(opts: { runtime?: TerminalKind } = {}): Deps {
     const kind = opts.runtime ?? "herdr";
     const quiet = { env: {}, sleep: async () => {} };
     return {

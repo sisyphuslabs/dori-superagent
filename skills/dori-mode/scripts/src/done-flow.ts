@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 
 import { type DoriConfig, fill } from "./config.ts";
-import type { SessionRef } from "../../../../src/runtime/types.ts";
+import { AGENT_SESSION_KINDS, type SessionRef } from "../../../../src/runtime/types.ts";
 import { type Lane, type Registry, sessionOf, statusOf, withStatus } from "./registry.ts";
 import { type ChosenRuntimes, type Clock, iso, type Runner, runtimesOf } from "./run.ts";
 import { sendVerified } from "./sessions.ts";
@@ -147,6 +147,9 @@ export const closeLane = async (
   const at = iso(deps.clock);
   const receipt = { checks, note, cleanup };
   await deps.registry.write(withStatus(lane, "closed", note, at, { closedAt: at, receipt }));
+  // A host session is resumed by any read that names it, so one read between its close and this write (a launch's
+  // startup check) brings it back: close it once more now that every reader sees the lane closed.
+  if (ref && AGENT_SESSION_KINDS.has(ref.runtime)) await closeSession(deps, ref);
   if (lesson) {
     try {
       const added = new Lessons(deps.config.stateDir).add({ ...lesson, lane: lane.key, cwd: root }, deps.clock.now());
