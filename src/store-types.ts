@@ -45,6 +45,9 @@ export type DeliveryAttempt = {
 /** A flush lock from another host (or an unreadable one) older than this is taken over; on this host only a dead pid frees it (#108). */
 export const INBOX_LOCK_STALE_MS = 60_000;
 
+/** A review or merge lock from another host (or an unreadable one) older than this is taken over; a live pid on this host keeps it. */
+export const HEAD_LOCK_STALE_MS = 60 * 60_000;
+
 export type QueuedMessage = { at: number; from: string; text: string; attempt?: DeliveryAttempt };
 
 export type ReviewReceipt = {

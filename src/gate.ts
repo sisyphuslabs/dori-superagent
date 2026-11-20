@@ -32,39 +32,47 @@ export async function review(
   model?: string,
 ): Promise<{ verdict: "CLEAR" | "BLOCK"; sha: string }> {
   const pr = parsePr(prId);
-  // hooks.reviewCommand replaces the built-in reviewer; it must print a VERDICT line like the built-in one.
-  const hook = loadHooks(d.store.root).reviewCommand;
   const sha = await headSha(d, pr);
-  const vars = { pr: pr.id, repo: pr.repo, number: String(pr.number), sha };
-  const text = prompt("review.md", vars);
-  const [cmd, ...argv] = hook
-    ? substitute(hook, { ...vars, text })
-    : [d.agentCmd, "-p", "--no-session", ...(model ? ["--model", model] : []), text];
-  const res = await d.exec(cmd ?? d.agentCmd, argv);
-  const verdicts = [...res.stdout.matchAll(/^VERDICT:\s*(CLEAR|BLOCK)\b/gm)];
-  const last = verdicts.at(-1);
-  if (!last) {
-    const name = `${pr.id.replaceAll("/", "__").replace("#", "_")}@${sha}-${randomUUID()}.noverdict.txt`;
-    const diagnostic = join(d.store.root, "receipts", name);
-    writeFileSync(diagnostic, res.stdout.split(/\r?\n/).slice(-200).join("\n"), { flag: "wx", mode: 0o600 });
-    const reason =
-      res.code === 0
-        ? "reviewer printed no VERDICT line"
-        : `reviewer exited ${res.code}: ${res.stderr.trim() || "no VERDICT line in its output"}`;
-    throw new Error(`${reason}; no receipt written; reviewer output saved to ${diagnostic}`);
+  const release = d.store.lockReceipt(pr.id, sha, d.now());
+  if (!release) throw new Refusal(`a review or merge is already in progress at head ${sha.slice(0, 12)}`);
+  try {
+    // Clear first: an in-flight, interrupted or failed attempt at this head must never stay merge-eligible.
+    d.store.clearReceipt(pr.id, sha);
+    // hooks.reviewCommand replaces the built-in reviewer; it must print a VERDICT line like the built-in one.
+    const hook = loadHooks(d.store.root).reviewCommand;
+    const vars = { pr: pr.id, repo: pr.repo, number: String(pr.number), sha };
+    const text = prompt("review.md", vars);
+    const [cmd, ...argv] = hook
+      ? substitute(hook, { ...vars, text })
+      : [d.agentCmd, "-p", "--no-session", ...(model ? ["--model", model] : []), text];
+    const res = await d.exec(cmd ?? d.agentCmd, argv);
+    const verdicts = [...res.stdout.matchAll(/^VERDICT:\s*(CLEAR|BLOCK)\b/gm)];
+    const last = verdicts.at(-1);
+    if (!last) {
+      const name = `${pr.id.replaceAll("/", "__").replace("#", "_")}@${sha}-${randomUUID()}.noverdict.txt`;
+      const diagnostic = join(d.store.root, "receipts", name);
+      writeFileSync(diagnostic, res.stdout.split(/\r?\n/).slice(-200).join("\n"), { flag: "wx", mode: 0o600 });
+      const reason =
+        res.code === 0
+          ? "reviewer printed no VERDICT line"
+          : `reviewer exited ${res.code}: ${res.stderr.trim() || "no VERDICT line in its output"}`;
+      throw new Error(`${reason}; no receipt written; reviewer output saved to ${diagnostic}`);
+    }
+    if (res.code !== 0) throw new Error(`reviewer exited ${res.code}: ${res.stderr.trim()}`);
+    const verdict = last[1] as "CLEAR" | "BLOCK";
+    d.store.saveReceipt({
+      pr: pr.id,
+      sha,
+      verdict,
+      model: hook ? "hook" : (model ?? "default"),
+      at: d.now(),
+      summary: res.stdout.trim().slice(-4000),
+    });
+    d.usage.record({ name: "dori.review_completed", verdict });
+    return { verdict, sha };
+  } finally {
+    release();
   }
-  if (res.code !== 0) throw new Error(`reviewer exited ${res.code}: ${res.stderr.trim()}`);
-  const verdict = last[1] as "CLEAR" | "BLOCK";
-  d.store.saveReceipt({
-    pr: pr.id,
-    sha,
-    verdict,
-    model: hook ? "hook" : (model ?? "default"),
-    at: d.now(),
-    summary: res.stdout.trim().slice(-4000),
-  });
-  d.usage.record({ name: "dori.review_completed", verdict });
-  return { verdict, sha };
 }
 
 type Check = { name: string; bucket: string };
@@ -73,15 +81,26 @@ type Check = { name: string; bucket: string };
 export async function mergeGate(d: Deps, prId: string, opts: { dryRun?: boolean } = {}): Promise<string> {
   const pr = parsePr(prId);
   const sha = await headSha(d, pr);
-  const refused = await gateRefusal(d, pr, sha);
-  if (refused) {
-    if (!opts.dryRun) d.usage.record({ name: "dori.merge_decided", outcome: refused[0] });
-    throw new Refusal(`MERGE_REFUSED ${refused[1]}`);
+  const release = d.store.lockReceipt(pr.id, sha, d.now());
+  if (!release) {
+    if (!opts.dryRun) d.usage.record({ name: "dori.merge_decided", outcome: "review_in_progress" });
+    throw new Refusal(
+      `MERGE_REFUSED review_in_progress: a review or merge is already in progress at head ${sha.slice(0, 12)}`,
+    );
   }
-  if (opts.dryRun) return `MERGE_OK ${pr.id} head=${sha} (dry run)`;
-  await gh(d, ["pr", "merge", String(pr.number), "--repo", pr.repo, "--squash", "--match-head-commit", sha]);
-  d.usage.record({ name: "dori.merge_decided", outcome: "merged" });
-  return `MERGED ${pr.id} head=${sha}`;
+  try {
+    const refused = await gateRefusal(d, pr, sha);
+    if (refused) {
+      if (!opts.dryRun) d.usage.record({ name: "dori.merge_decided", outcome: refused[0] });
+      throw new Refusal(`MERGE_REFUSED ${refused[1]}`);
+    }
+    if (opts.dryRun) return `MERGE_OK ${pr.id} head=${sha} (dry run)`;
+    await gh(d, ["pr", "merge", String(pr.number), "--repo", pr.repo, "--squash", "--match-head-commit", sha]);
+    d.usage.record({ name: "dori.merge_decided", outcome: "merged" });
+    return `MERGED ${pr.id} head=${sha}`;
+  } finally {
+    release();
+  }
 }
 
 async function gateRefusal(d: Deps, pr: PrRef, sha: string): Promise<[MergeOutcome, string] | undefined> {

@@ -170,7 +170,7 @@ lead 是唯一和你说话的会话（`prompts/lead.md`）。lane 规则把每�
 
 ### merge 需要精确 head 上的 CLEAR receipt 和全绿的检查
 
-`dori merge` 用 `gh` 读取 PR 的 head SHA，然后要求 `~/.dori/receipts/` 中有一份针对该 SHA、结论为 `CLEAR` 的 receipt。只有 `dori review` 会写 receipt：它基于 `prompts/review.md` 运行一个全新的非交互式 omo，固定在该 SHA 上；如果 reviewer 没有打印 `VERDICT:` 行，就不写 receipt。
+`dori merge` 用 `gh` 读取 PR 的 head SHA，然后要求 `~/.dori/receipts/` 中有一份针对该 SHA、结论为 `CLEAR` 的 receipt。只有 `dori review` 会写 receipt：它基于 `prompts/review.md` 运行一个全新的非交互式 omo，固定在该 SHA 上；review 在开始前删除该 SHA 之前的 receipt，只在返回 `CLEAR` 或 `BLOCK` 时写入新 receipt。当该 SHA 上的 review 或 merge 正在进行时，`dori merge` 会拒绝，而不会使用旧 receipt。
 
 接着 `gh pr checks` 必须返回至少一个检查，每个检查都必须是 `pass` 或 `skipping`，且至少一个是 `pass`。空的检查列表会被拒绝，理由是 "an empty check list is never green"。review 之后的 push 会改变 head SHA，receipt 就不再匹配，`dori review` 需要重新运行。
 

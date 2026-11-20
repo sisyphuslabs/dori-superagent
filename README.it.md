@@ -170,7 +170,7 @@ Una lane che non fa rapporto da 10 minuti, e il cui pane non sta lavorando, rice
 
 ### Il merge richiede una receipt CLEAR sull'head esatto e check verdi
 
-`dori merge` legge con `gh` lo SHA di head della PR, poi richiede in `~/.dori/receipts/` una receipt per quello SHA con verdetto `CLEAR`. Solo `dori review` scrive receipt: lancia un omo nuovo e non interattivo su `prompts/review.md`, fissato a quello SHA, e quando il reviewer non stampa una riga `VERDICT:` non viene scritta nessuna receipt.
+`dori merge` legge con `gh` lo SHA di head della PR, poi richiede in `~/.dori/receipts/` una receipt per quello SHA con verdetto `CLEAR`. Solo `dori review` scrive receipt: lancia un omo nuovo e non interattivo su `prompts/review.md`, fissato a quello SHA; una review rimuove la receipt precedente per quello SHA prima di iniziare e ne scrive una nuova solo quando restituisce CLEAR o BLOCK. Mentre una review o un merge su quello SHA è in corso, `dori merge` rifiuta invece di usare una receipt precedente.
 
 Poi `gh pr checks` deve restituire almeno un check, ogni check deve essere `pass` o `skipping`, e almeno uno deve essere `pass`. Una lista di check vuota viene rifiutata con "an empty check list is never green". Un push dopo la review cambia lo SHA di head, quindi la receipt non corrisponde più e `dori review` va rilanciato.
 

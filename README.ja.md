@@ -170,7 +170,7 @@ hcにはワークスペースもタブもありません。Doriはセッショ�
 
 ### マージには正確なheadでのCLEARレシートと緑のチェックが必要
 
-`dori merge` は `gh` でPRのhead SHAを読み、そのSHAに対する判定 `CLEAR` のレシート（receipt）が `~/.dori/receipts/` にあることを求めます。レシートを書くのは `dori review` だけです。`dori review` はそのSHAに固定した新しい非対話のomoを `prompts/review.md` で実行し、レビュアーが `VERDICT:` 行を出力しなければレシートは書かれません。
+`dori merge` は `gh` でPRのhead SHAを読み、そのSHAに対する判定 `CLEAR` のレシート（receipt）が `~/.dori/receipts/` にあることを求めます。レシートを書くのは `dori review` だけです。`dori review` はそのSHAに固定した新しい非対話のomoを `prompts/review.md` で実行します。レビューは開始前にそのSHAの以前のレシートを削除し、`CLEAR` または `BLOCK` を返したときだけ新しいレシートを書きます。そのSHAでレビューまたはマージが進行中の間、`dori merge` は古いレシートを使わずに拒否します。
 
 次に、`gh pr checks` が少なくとも1つのチェックを返し、すべてのチェックが `pass` か `skipping` で、少なくとも1つが `pass` である必要があります。チェック一覧が空なら "an empty check list is never green" として拒否されます。レビュー後にプッシュするとhead SHAが変わるので、レシートが一致しなくなり、`dori review` をもう一度実行する必要があります。
 
