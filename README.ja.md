@@ -166,7 +166,9 @@ hcにはワークスペースもタブもありません。Doriはセッショ�
 
 ### 10分、20分、40分の促し
 
-10分間報告がなく、ペインも作業中でないレーンには、ペインに `prompts/nudge.md` が送られます。20分でもう一度送られ、40分になると当番ループがリードに `[ESCALATE <key>]` を送ります。`--status waiting` を報告したレーンや、ペインが `blocked` のレーンには手を出しません。
+10分間報告がなく、ペインも作業中でないレーンには、ペインに `prompts/nudge.md` が送られます。20分でもう一度送られ、40分になると当番ループがリードに `[ESCALATE <key>]` を送ります。`--status waiting` を報告したレーンには手を出しません。
+
+`blocked` か `error` のまま止まっているペインには入力が届かないので、自力では動き出しません。10分経つと当番ループはその停止について一度だけリードに `[STUCK <key>]` を送り、ペインには何も入力しません。ペインが別の状態に戻れば、次の停止はまた報告されます。
 
 ### マージには正確なheadでのCLEARレシートと緑のチェックが必要
 
@@ -275,7 +277,7 @@ doriはomoと同じ方法で匿名の利用カウントを送ります。OTLP/HT
 | `dori.lane_ready` | `dori ready` | `evidence_count`, `lane_minutes` |
 | `dori.review_completed` | `dori review` | `verdict`: `CLEAR` または `BLOCK` |
 | `dori.merge_decided` | `--dry-run` なしの `dori merge` | `outcome` |
-| `dori.duty_summary` | 当番ループから、最大で1時間に1回 | `ticks`, `flushed`, `nudges`, `escalations`, `lost` |
+| `dori.duty_summary` | 当番ループから、最大で1時間に1回 | `ticks`, `flushed`, `nudges`, `escalations`, `lost`, `stuck` |
 
 どのレコードにも、サービス名とバージョン、インストールハッシュ、CIフラグ、OSの種類とバージョン、CPUアーキテクチャが含まれます。パス、リポジトリ名、PR番号、レーンキー、ブリーフ、メッセージ、その他のテキストは一切送りません。コマンドが送信を待つのは最大2秒で、テレメトリーの失敗でコマンドが失敗することはありません。
 

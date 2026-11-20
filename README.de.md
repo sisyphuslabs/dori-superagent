@@ -166,7 +166,9 @@ Wenn eine Zustellung fehlschlug, nachdem der Text das Pane womöglich schon erre
 
 ### Anstupser nach 10, 20 und 40 Minuten
 
-Eine Lane, die sich 10 Minuten nicht gemeldet hat und deren Pane nicht arbeitet, bekommt `prompts/nudge.md` in ihr Pane, nach 20 noch einmal, und nach 40 schickt der Duty-Loop dem Lead `[ESCALATE <key>]`. Eine Lane, die `--status waiting` gemeldet hat oder deren Pane `blocked` ist, bleibt in Ruhe.
+Eine Lane, die sich 10 Minuten nicht gemeldet hat und deren Pane nicht arbeitet, bekommt `prompts/nudge.md` in ihr Pane, nach 20 noch einmal, und nach 40 schickt der Duty-Loop dem Lead `[ESCALATE <key>]`. Eine Lane, die `--status waiting` gemeldet hat, bleibt in Ruhe.
+
+Ein Pane, das in `blocked` oder `error` steht, nimmt keine Eingabe an, also würde es sich von selbst nie wieder bewegen: nach 10 Minuten schickt der Duty-Loop dem Lead für diesen Stillstand einmal `[STUCK <key>]` und tippt nichts in das Pane. Meldet das Pane wieder etwas anderes, wird ein späterer Stillstand erneut gemeldet.
 
 ### Merge braucht ein CLEAR-Receipt am exakten Head und grüne Checks
 
@@ -275,7 +277,7 @@ dori sendet anonyme Nutzungszahlen auf dieselbe Weise wie omo: OTLP/HTTP-JSON-Lo
 | `dori.lane_ready` | `dori ready` | `evidence_count`, `lane_minutes` |
 | `dori.review_completed` | `dori review` | `verdict`: `CLEAR` oder `BLOCK` |
 | `dori.merge_decided` | `dori merge` ohne `--dry-run` | `outcome` |
-| `dori.duty_summary` | höchstens einmal pro Stunde, vom Duty-Loop | `ticks`, `flushed`, `nudges`, `escalations`, `lost` |
+| `dori.duty_summary` | höchstens einmal pro Stunde, vom Duty-Loop | `ticks`, `flushed`, `nudges`, `escalations`, `lost`, `stuck` |
 
 Jeder Eintrag enthält außerdem den Dienstnamen und die Version, den Installations-Hash, ein CI-Flag, Typ und Version des Betriebssystems und die CPU-Architektur. Nie gesendet werden: Pfade, Repo-Namen, PR-Nummern, Lane-Keys, Briefs, Nachrichten oder sonst irgendein Text. Ein Befehl wartet höchstens 2 Sekunden auf das Senden, und ein Telemetriefehler lässt nie einen Befehl fehlschlagen.
 

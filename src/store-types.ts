@@ -22,8 +22,11 @@ export type Lane = {
   createdAt: number;
   lastActivityAt: number;
   nudges: number;
+  /** A pane stuck in `blocked` or `error`: when that stall was first seen, and whether the lead has been told. */
+  blockedSince?: number;
+  blockedAlerted?: boolean;
   final?: { text: string; evidence: string[]; at: number };
-  log: { at: number; kind: "start" | "report" | "ready" | "nudge" | "done" | "lost"; text: string }[];
+  log: { at: number; kind: "start" | "report" | "ready" | "nudge" | "stuck" | "done" | "lost"; text: string }[];
 };
 
 /** The sessions `dori up` opens; roles.json maps each to a ref string (a bare herdr pane id, or `hc:t7`). */
