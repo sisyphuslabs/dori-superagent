@@ -1,5 +1,6 @@
 /** dori send, presence, inbound and transcribe: the messengers. */
 import { type Command, die, envSlackToken, every, slackAuth } from "./cli-context.ts";
+import { discordInbound } from "./cli-discord.ts";
 import { Discord, discordPresence } from "./messenger/discord.ts";
 import { fetchHttp, MessengerError, UnsafeMessageError } from "./messenger/http.ts";
 import { Slack } from "./messenger/slack.ts";
@@ -141,7 +142,8 @@ const telegramInbound = async (stateDir: string, minutes: number): Promise<void>
 const inbound: Command = async ({ key, loopMinutes, config }) => {
   const minutes = loopMinutes();
   if (key === "telegram") return await telegramInbound(config.stateDir, minutes);
-  if (key !== "slack") die("inbound supports slack or telegram");
+  if (key === "discord") return await discordInbound(config.stateDir);
+  if (key !== "slack") die("inbound supports slack, telegram or discord");
   const auth = slackAuth(envSlackToken() ?? die(NO_SLACK_TOKEN));
   const ledger = new ThreadLedger(`${config.stateDir}/slack-threads.json`);
   const slack = new Slack(fetchHttp, realClock, auth, undefined, ledger);
