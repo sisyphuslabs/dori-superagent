@@ -55,7 +55,8 @@ const USAGE = `dori <command> [options]
   presence <slack|discord>             keep the account shown as online until stopped
   transcribe <audio-file>              run hooks.transcribe and print the text
   inbound slack|telegram [--loop MIN]  print INBOUND lines: Slack unread thread replies / Telegram owner DMs, edits and media + configured topic
-                                       the Dori posted in (any helper), DMs and channels with unread mentions`;
+                                       the Dori posted in (any helper), DMs and channels with unread mentions
+  inbound discord                      print INBOUND lines from the Discord gateway (needs MESSAGE CONTENT intent)`;
 
 const config = await loadConfig().catch((e: unknown) =>
   e instanceof ConfigError ? die(e.message) : Promise.reject(e),
