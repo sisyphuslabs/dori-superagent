@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { configPath, fill } from "./config.ts";
 import type { FlowDeps } from "./done-flow.ts";
 import { laneGoalActive } from "./goal-record.ts";
-import { BRIEF_START, cliCommand, footer, leadSendArgv, originalBrief, quoteForPane } from "./launch-footer.ts";
+import { BRIEF_START, cliCommand, footer, leadSendArgv, originalBrief, paneCommandLine } from "./launch-footer.ts";
 import type { Runtimes } from "../../../../src/runtime/registry.ts";
 import { AGENT_SESSION_KINDS, type SessionRef } from "../../../../src/runtime/types.ts";
 import { LANE_KEY, type Lane, RESERVED_LANE_KEY, sessionFields } from "./registry.ts";
@@ -172,7 +172,7 @@ const startLane = async (
   try {
     await rts
       .for(ref)
-      .start(ref, hosted ? prompt : fill(deps.config.agentCommand, { model, prompt }).map(quoteForPane).join(" "));
+      .start(ref, hosted ? prompt : paneCommandLine(fill(deps.config.agentCommand, { model, prompt })));
   } catch (e) {
     return { lane, startup: `STARTUP_ERROR ${input.key} ${pane}: start failed: ${lastLines(String(e))}` };
   }

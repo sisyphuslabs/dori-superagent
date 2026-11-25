@@ -79,3 +79,10 @@ export const footer = (
 
 export const quoteForPane = (arg: string): string =>
   /^[\w./:@=-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, `'\\''`)}'`;
+
+// The line typed into the new pane. A Windows herdr pane runs PowerShell, where an apostrophe inside '...' is doubled
+// and a quoted program path needs the call operator; every other host keeps the POSIX quoting.
+export const paneCommandLine = (argv: readonly string[], platform: NodeJS.Platform = process.platform): string =>
+  platform === "win32"
+    ? `& ${argv.map((a) => `'${a.replace(/'/g, "''")}'`).join(" ")}`
+    : argv.map(quoteForPane).join(" ");

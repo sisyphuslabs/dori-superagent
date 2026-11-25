@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LaunchError } from "../src/launch.ts";
 import { adoptLane } from "../src/launch-adopt.ts";
-import { cliCommand, footer, shellQuote } from "../src/launch-footer.ts";
+import { cliCommand, footer, paneCommandLine, shellQuote } from "../src/launch-footer.ts";
 import type { Lane } from "../src/registry.ts";
 import { depsFor, fakeClock, newWorld, withState, type World } from "./fakes.ts";
 
@@ -78,4 +78,15 @@ test("the footer CLI command survives a skill path with a space or a quote", asy
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("a Windows pane line is PowerShell-quoted: apostrophes doubled, call operator first", () => {
+  const argv = ["C:\\Users\\ivan\\.local\\bin\\omo-claude.cmd", "--model", "m", "Read the brief's footer 한국어"];
+  expect(paneCommandLine(argv, "win32")).toBe(
+    "& 'C:\\Users\\ivan\\.local\\bin\\omo-claude.cmd' '--model' 'm' 'Read the brief''s footer 한국어'",
+  );
+});
+
+test("a POSIX pane line keeps the backslash-escaped apostrophe", () => {
+  expect(paneCommandLine(["omo", "--model", "m", "the brief's footer"], "darwin")).toBe("omo --model m 'the brief'\\''s footer'");
 });
