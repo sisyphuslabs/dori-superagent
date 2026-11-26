@@ -102,13 +102,14 @@ describe("startLane group fallback", () => {
 
   test("an hc lane gets this home's group label, never the caller's herdr workspace id", async () => {
     const { w, d, brief } = setup({ runtime: "hc" });
-    await withEnv({ ...clear, HERDR_PANE_ID: "w9:p9", HERDR_WORKSPACE_ID: "w9" }, async () => {
+    // The caller id must not be able to occur by chance in the argv: the random DORI_HOME suffix once held "w9".
+    await withEnv({ ...clear, HERDR_PANE_ID: "caller-ws:p9", HERDR_WORKSPACE_ID: "caller-ws" }, async () => {
       await startLane(d, "hc-lane", brief);
     });
     const run = w.hc.calls.find((args) => args[0] === "run")!;
     expect(run).toBeDefined();
     const group = run.find((a) => a.startsWith("dori.group="))!;
     expect(group).toMatch(/^dori\.group=[0-9a-f]{8}$/);
-    expect(run.join(" ")).not.toContain("w9");
+    expect(run.join(" ")).not.toContain("caller-ws");
   });
 });
