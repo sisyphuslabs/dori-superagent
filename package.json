@@ -16,7 +16,7 @@
     "lint:ratchet": "bun scripts/lint-ratchet.ts",
     "lint:ratchet:update": "bun scripts/lint-ratchet.ts --update",
     "knip": "knip",
-    "test": "bun test ./test/ ./scripts/",
+    "test": "bun test ./test/ ./scripts/ ./skills/agent-link/",
     "test:skill": "cd skills/dori-mode/scripts && bun test",
     "ci": "bun run check && bun run typecheck && bun run knip && bun run lint:loc && bun run lint:ratchet && bun run test && bun run test:skill"
   },
