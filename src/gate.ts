@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { prompt, type Deps } from "./harness.ts";
 import { Refusal } from "./refusal.ts";
 import { loadHooks, substitute } from "./hooks.ts";
+import { attachCleanupSignals, createReviewTmpDir, removeReviewTmpDir, sweepStaleReviewTmpDirs } from "./review-tmp.ts";
 import { scanVerdicts } from "./verdict.ts";
 import type { MergeOutcome } from "./telemetry.ts";
 
@@ -33,20 +34,46 @@ export async function review(
   model?: string,
 ): Promise<{ verdict: "CLEAR" | "BLOCK"; sha: string }> {
   const pr = parsePr(prId);
+  sweepStaleReviewTmpDirs();
   const sha = await headSha(d, pr);
   const release = d.store.lockReceipt(pr.id, sha, d.now());
   if (!release) throw new Refusal(`a review or merge is already in progress at head ${sha.slice(0, 12)}`);
+  const tmpDir = createReviewTmpDir();
+  let child: { kill(signal?: number | NodeJS.Signals): void } | undefined;
+  let released = false;
+  const releaseOnce = () => {
+    if (released) return;
+    released = true;
+    release();
+  };
+  const detachSignals = attachCleanupSignals(() => {
+    try {
+      child?.kill("SIGTERM");
+    } catch {}
+    if (!removeReviewTmpDir(tmpDir)) {
+      try {
+        child?.kill("SIGKILL");
+      } catch {}
+      removeReviewTmpDir(tmpDir);
+    }
+    releaseOnce();
+  });
   try {
     // Clear first: an in-flight, interrupted or failed attempt at this head must never stay merge-eligible.
     d.store.clearReceipt(pr.id, sha);
     // hooks.reviewCommand replaces the built-in reviewer; it must print a VERDICT line like the built-in one.
     const hook = loadHooks(d.store.root).reviewCommand;
-    const vars = { pr: pr.id, repo: pr.repo, number: String(pr.number), sha };
+    const vars = { pr: pr.id, repo: pr.repo, number: String(pr.number), sha, tmpDir };
     const text = prompt("review.md", vars);
     const [cmd, ...argv] = hook
       ? substitute(hook, { ...vars, text })
       : [d.agentCmd, "-p", "--no-session", ...(model ? ["--model", model] : []), text];
-    const res = await d.exec(cmd ?? d.agentCmd, argv);
+    const res = await d.exec(cmd ?? d.agentCmd, argv, {
+      env: { TMPDIR: tmpDir, DORI_REVIEW_TMPDIR: tmpDir },
+      onSpawn: (proc) => {
+        child = proc;
+      },
+    });
     const scan = scanVerdicts(res.stdout);
     if (res.code !== 0 || scan.kind !== "verdict") {
       const name = `${pr.id.replaceAll("/", "__").replace("#", "_")}@${sha}-${randomUUID()}.noverdict.txt`;
@@ -72,7 +99,9 @@ export async function review(
     d.usage.record({ name: "dori.review_completed", verdict });
     return { verdict, sha };
   } finally {
-    release();
+    detachSignals();
+    removeReviewTmpDir(tmpDir);
+    releaseOnce();
   }
 }
 
