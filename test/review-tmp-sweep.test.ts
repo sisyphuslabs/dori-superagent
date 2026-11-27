@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { REVIEW_TMP_PREFIX, REVIEW_TMP_STALE_MS, sweepStaleReviewTmpDirs } from "../src/review-tmp.ts";
+import { parseLsofInUse, REVIEW_TMP_PREFIX, REVIEW_TMP_STALE_MS, sweepStaleReviewTmpDirs } from "../src/review-tmp.ts";
 
 const dirs: string[] = [];
 function tempDir(prefix: string): string {
@@ -105,5 +105,14 @@ describe("sweepStaleReviewTmpDirs", () => {
 
     expect(sweepStaleReviewTmpDirs({ baseDir: base, now })).toEqual([stale]);
     expect(existsSync(stale)).toBe(false);
+  });
+
+  test("parseLsofInUse treats pid output as in-use even when lsof +D exits 1 (macOS 4.91 behavior) and fails safe on errors", () => {
+    expect(parseLsofInUse(0, "p1234\n", "")).toBe(true);
+    expect(parseLsofInUse(1, "p1234\n", "")).toBe(true);
+    expect(parseLsofInUse(1, "", "")).toBe(false);
+    expect(parseLsofInUse(0, "", "")).toBe(false);
+    expect(parseLsofInUse(1, "", "lsof: status error\n")).toBe(true);
+    expect(parseLsofInUse(2, "", "")).toBe(true);
   });
 });

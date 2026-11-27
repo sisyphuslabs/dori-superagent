@@ -83,19 +83,24 @@ function isDirInUseLinux(prefixes: readonly string[]): boolean {
   return false;
 }
 
+export function parseLsofInUse(exitCode: number | null, stdout: string, stderr: string): boolean {
+  // On macOS (lsof 4.91), `lsof +D` exits 1 with empty stderr even when matches exist unless every entry in the tree is open.
+  if (/^p\d+/m.test(stdout)) return true;
+  if (exitCode === 0) return false;
+  if (exitCode === 1 && stderr.trim() === "") return false;
+  return true;
+}
+
 function isDirInUseLsof(target: string): boolean {
   try {
-    const res = Bun.spawnSync(["lsof", "-F", "p", "+D", target], {
+    const res = Bun.spawnSync(["lsof", "-w", "-n", "-P", "-Fp", "+D", target], {
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
     });
     const stdout = new TextDecoder().decode(res.stdout);
     const stderr = new TextDecoder().decode(res.stderr);
-    if (res.exitCode === 0) return /^p\d+/m.test(stdout);
-    // lsof exits 1 with empty stderr when no process holds any file or cwd under target; any other error fails safe.
-    if (res.exitCode === 1 && stderr.trim() === "") return false;
-    return true;
+    return parseLsofInUse(res.exitCode, stdout, stderr);
   } catch {
     return true;
   }
